@@ -1,14 +1,14 @@
 {
   "name": "calistenia_backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Backend para app de calistenia con IA",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["calistenia", "fitness", "ai", "grok"],
   "author": "",
   "license": "ISC",
   "dependencies": {

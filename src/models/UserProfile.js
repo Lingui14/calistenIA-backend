@@ -1,19 +1,32 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
-const User = require('./User');
 
 const UserProfile = sequelize.define('UserProfile', {
-  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  id: { 
+    type: DataTypes.UUID, 
+    defaultValue: DataTypes.UUIDV4, 
+    primaryKey: true 
+  },
+  user_id: {
+    type: DataTypes.UUID,
+    allowNull: false,
+  },
   name: DataTypes.STRING,
   age: DataTypes.INTEGER,
   weight: DataTypes.FLOAT,
   height: DataTypes.FLOAT,
-  experience_level: DataTypes.STRING,
-  available_equipment: DataTypes.JSON,
+  experience_level: {
+    type: DataTypes.STRING,
+    defaultValue: 'beginner',
+  },
+  available_equipment: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+  },
   goals: DataTypes.TEXT,
+}, {
+  tableName: 'UserProfiles',
+  timestamps: true,
 });
-
-User.hasOne(UserProfile, { foreignKey: 'user_id' });
-UserProfile.belongsTo(User, { foreignKey: 'user_id' });
 
 module.exports = UserProfile;

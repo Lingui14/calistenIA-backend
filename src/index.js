@@ -18,12 +18,19 @@ app.use(helmet());
 app.use(express.json());
 app.use(morgan('dev'));
 
+// Health check
 app.get('/ping', (req, res) => res.json({ ok: true }));
 
+// Rutas con prefijo /api para coincidir con el frontend
+app.use('/api/auth', authRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/routines', routineRoutes);
+app.use('/api/training', trainingRoutes);
+
+// También mantener rutas sin /api por compatibilidad
 app.use('/auth', authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/routines', routineRoutes);
-app.use('/sessions', trainingRoutes);
 
 const PORT = process.env.PORT || 4000;
 
@@ -32,7 +39,7 @@ async function start() {
     await sequelize.authenticate();
     console.log('✅ Conectado a la BD');
 
-    await sequelize.sync(); // MVP: crea tablas si no existen
+    await sequelize.sync({ alter: true }); // alter: true actualiza tablas existentes
     console.log('✅ Tablas sincronizadas');
 
     app.listen(PORT, () => {

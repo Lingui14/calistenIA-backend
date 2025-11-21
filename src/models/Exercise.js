@@ -1,19 +1,40 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
-const Routine = require('./Routine');
 
 const Exercise = sequelize.define('Exercise', {
-  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  routine_id: { type: DataTypes.UUID, allowNull: false },
-  name: { type: DataTypes.STRING, allowNull: false },
+  id: { 
+    type: DataTypes.UUID, 
+    defaultValue: DataTypes.UUIDV4, 
+    primaryKey: true 
+  },
+  routine_id: { 
+    type: DataTypes.UUID, 
+    allowNull: false 
+  },
+  name: { 
+    type: DataTypes.STRING, 
+    allowNull: false 
+  },
   description: DataTypes.TEXT,
-  sets: DataTypes.INTEGER,
-  reps: DataTypes.INTEGER,
-  rest_time: DataTypes.INTEGER,
-  order_index: DataTypes.INTEGER,
+  sets: {
+    type: DataTypes.INTEGER,
+    defaultValue: 3,
+  },
+  reps: {
+    type: DataTypes.INTEGER,
+    defaultValue: 10,
+  },
+  rest_time: {
+    type: DataTypes.INTEGER,
+    defaultValue: 60, // segundos
+  },
+  order_index: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+}, {
+  tableName: 'Exercises',
+  timestamps: true,
 });
-
-Routine.hasMany(Exercise, { foreignKey: 'routine_id' });
-Exercise.belongsTo(Routine, { foreignKey: 'routine_id' });
 
 module.exports = Exercise;
