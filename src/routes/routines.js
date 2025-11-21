@@ -2,22 +2,28 @@ const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { Routine, Exercise } = require('../models');
 
-/**
- * GET /api/routines/active
- * Obtiene la rutina activa más reciente del usuario
- */
+// GET /api/routines - Todas las rutinas del usuario
+router.get('/', auth, async (req, res) => {
+  try {
+    const routines = await Routine.findAll({
+      where: { user_id: req.user.id },
+      order: [['createdAt', 'DESC']],
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+    res.json(routines);
+  } catch (err) {
+    console.error('Error obteniendo rutinas:', err);
+    res.status(500).json({ message: 'Error obteniendo rutinas' });
+  }
+});
+
+// GET /api/routines/active - Última rutina creada
 router.get('/active', auth, async (req, res) => {
   try {
     const routine = await Routine.findOne({
       where: { user_id: req.user.id },
       order: [['createdAt', 'DESC']],
-      include: [
-        { 
-          model: Exercise, 
-          as: 'Exercises',
-          order: [['order_index', 'ASC']]
-        }
-      ],
+      include: [{ model: Exercise, as: 'Exercises' }],
     });
 
     if (!routine) {
@@ -26,182 +32,173 @@ router.get('/active', auth, async (req, res) => {
 
     return res.json(routine);
   } catch (err) {
-    console.error('Error en GET /routines/active:', err);
+    console.error('Error en /routines/active:', err);
     return res.status(500).json({ message: 'Error obteniendo rutina activa' });
   }
 });
 
-/**
- * GET /api/routines
- * Obtiene todas las rutinas del usuario
- */
-router.get('/', auth, async (req, res) => {
+// POST /api/routines - Crear rutina personalizada
+router.post('/', auth, async (req, res) => {
   try {
-    const routines = await Routine.findAll({
-      where: { user_id: req.user.id },
-      order: [['createdAt', 'DESC']],
-      include: [
-        { 
-          model: Exercise, 
-          as: 'Exercises' 
-        }
-      ],
+    const { name, description, difficulty_level, exercises } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ message: 'El nombre es requerido' });
+    }
+
+    const routine = await Routine.create({
+      user_id: req.user.id,
+      name,
+      description: description || '',
+      difficulty_level: difficulty_level || 'intermediate',
     });
 
-    return res.json(routines);
+    // Si vienen ejercicios, crearlos
+    if (exercises && exercises.length > 0) {
+      const exercisesData = exercises.map((ex, index) => ({
+        routine_id: routine.id,
+        name: ex.name,
+        description: ex.description || '',
+        sets: ex.sets || 3,
+        reps: ex.reps || 10,
+        rest_time: ex.rest_time || 60,
+        order_index: index + 1,
+      }));
+
+      await Exercise.bulkCreate(exercisesData);
+    }
+
+    // Devolver rutina con ejercicios
+    const fullRoutine = await Routine.findByPk(routine.id, {
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    res.json(fullRoutine);
   } catch (err) {
-    console.error('Error en GET /routines:', err);
-    return res.status(500).json({ message: 'Error obteniendo rutinas' });
+    console.error('Error creando rutina:', err);
+    res.status(500).json({ message: 'Error creando rutina' });
   }
 });
 
-/**
- * GET /api/routines/:id
- * Obtiene una rutina específica por ID
- */
-router.get('/:id', auth, async (req, res) => {
+// PUT /api/routines/:id - Actualizar rutina
+router.put('/:id', auth, async (req, res) => {
   try {
+    const { name, description, difficulty_level, exercises } = req.body;
+
     const routine = await Routine.findOne({
       where: { id: req.params.id, user_id: req.user.id },
-      include: [
-        { 
-          model: Exercise, 
-          as: 'Exercises',
-          order: [['order_index', 'ASC']]
-        }
-      ],
     });
 
     if (!routine) {
       return res.status(404).json({ message: 'Rutina no encontrada' });
     }
 
-    return res.json(routine);
+    // Actualizar datos básicos
+    await routine.update({
+      name: name || routine.name,
+      description: description !== undefined ? description : routine.description,
+      difficulty_level: difficulty_level || routine.difficulty_level,
+    });
+
+    // Si vienen ejercicios, reemplazar los existentes
+    if (exercises && exercises.length > 0) {
+      await Exercise.destroy({ where: { routine_id: routine.id } });
+
+      const exercisesData = exercises.map((ex, index) => ({
+        routine_id: routine.id,
+        name: ex.name,
+        description: ex.description || '',
+        sets: ex.sets || 3,
+        reps: ex.reps || 10,
+        rest_time: ex.rest_time || 60,
+        order_index: index + 1,
+      }));
+
+      await Exercise.bulkCreate(exercisesData);
+    }
+
+    // Devolver rutina actualizada
+    const fullRoutine = await Routine.findByPk(routine.id, {
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    res.json(fullRoutine);
   } catch (err) {
-    console.error('Error en GET /routines/:id:', err);
-    return res.status(500).json({ message: 'Error obteniendo rutina' });
+    console.error('Error actualizando rutina:', err);
+    res.status(500).json({ message: 'Error actualizando rutina' });
   }
 });
 
-/**
- * POST /api/routines/generate
- * Genera una nueva rutina (MVP: datos de ejemplo, después integrará Grok)
- */
+// DELETE /api/routines/:id - Eliminar rutina
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const routine = await Routine.findOne({
+      where: { id: req.params.id, user_id: req.user.id },
+    });
+
+    if (!routine) {
+      return res.status(404).json({ message: 'Rutina no encontrada' });
+    }
+
+    // Eliminar ejercicios primero
+    await Exercise.destroy({ where: { routine_id: routine.id } });
+    await routine.destroy();
+
+    res.json({ message: 'Rutina eliminada' });
+  } catch (err) {
+    console.error('Error eliminando rutina:', err);
+    res.status(500).json({ message: 'Error eliminando rutina' });
+  }
+});
+
+// POST /api/routines/generate - Generar rutina de ejemplo (IA MVP)
 router.post('/generate', auth, async (req, res) => {
   try {
-    // TODO: Integrar Grok API para generar rutinas personalizadas
-    // Por ahora, rutina de ejemplo para MVP
-    
     const routine = await Routine.create({
       user_id: req.user.id,
-      name: 'Rutina CalistenIA',
-      description: 'Rutina personalizada generada con IA para principiantes',
+      name: 'Rutina IA (MVP)',
+      description: 'Rutina generada automáticamente',
       difficulty_level: 'beginner',
     });
 
     const exercisesData = [
-      { 
-        name: 'Flexiones', 
-        description: 'Flexiones de pecho en el suelo',
-        sets: 3, 
-        reps: 10, 
-        rest_time: 60, 
-        order_index: 1 
-      },
-      { 
-        name: 'Sentadillas', 
-        description: 'Sentadillas con peso corporal',
-        sets: 3, 
-        reps: 15, 
-        rest_time: 60, 
-        order_index: 2 
-      },
-      { 
-        name: 'Dominadas asistidas', 
-        description: 'Dominadas con banda de resistencia o asistidas',
-        sets: 3, 
-        reps: 5, 
-        rest_time: 90, 
-        order_index: 3 
-      },
-      { 
-        name: 'Plancha', 
-        description: 'Plancha abdominal isométrica',
-        sets: 3, 
-        reps: 30, // segundos
-        rest_time: 45, 
-        order_index: 4 
-      },
-      { 
-        name: 'Fondos en silla', 
-        description: 'Fondos de tríceps usando una silla o banco',
-        sets: 3, 
-        reps: 12, 
-        rest_time: 60, 
-        order_index: 5 
-      },
+      { routine_id: routine.id, name: 'Flexiones', sets: 3, reps: 10, rest_time: 60, order_index: 1 },
+      { routine_id: routine.id, name: 'Sentadillas', sets: 3, reps: 15, rest_time: 60, order_index: 2 },
+      { routine_id: routine.id, name: 'Dominadas asistidas', sets: 3, reps: 5, rest_time: 90, order_index: 3 },
+      { routine_id: routine.id, name: 'Plancha', sets: 3, reps: 30, rest_time: 45, order_index: 4 },
+      { routine_id: routine.id, name: 'Fondos en silla', sets: 3, reps: 8, rest_time: 60, order_index: 5 },
     ];
 
-    const exercises = await Promise.all(
-      exercisesData.map(e =>
-        Exercise.create({ ...e, routine_id: routine.id })
-      )
-    );
+    await Exercise.bulkCreate(exercisesData);
 
-    // Agregar ejercicios al objeto de respuesta
-    const routineWithExercises = routine.toJSON();
-    routineWithExercises.Exercises = exercises;
+    const fullRoutine = await Routine.findByPk(routine.id, {
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
 
-    return res.json(routineWithExercises);
+    res.json(fullRoutine);
   } catch (err) {
-    console.error('Error en POST /routines/generate:', err);
-    return res.status(500).json({ message: 'Error generando rutina' });
+    console.error('Error en /routines/generate:', err);
+    res.status(500).json({ message: 'Error generando rutina' });
   }
 });
 
-/**
- * DELETE /api/routines/:id
- * Elimina una rutina
- */
-router.delete('/:id', auth, async (req, res) => {
+// POST /api/routines/:id/favorite - Marcar como favorita
+router.post('/:id/favorite', auth, async (req, res) => {
   try {
     const routine = await Routine.findOne({
-      where: { id: req.params.id, user_id: req.user.id }
+      where: { id: req.params.id, user_id: req.user.id },
     });
 
     if (!routine) {
       return res.status(404).json({ message: 'Rutina no encontrada' });
     }
 
-    await routine.destroy();
-    return res.json({ message: 'Rutina eliminada' });
+    await routine.update({ is_favorite: !routine.is_favorite });
+
+    res.json(routine);
   } catch (err) {
-    console.error('Error en DELETE /routines/:id:', err);
-    return res.status(500).json({ message: 'Error eliminando rutina' });
-  }
-});
-
-/**
- * PATCH /api/routines/:id/favorite
- * Marca/desmarca una rutina como favorita
- */
-router.patch('/:id/favorite', auth, async (req, res) => {
-  try {
-    const routine = await Routine.findOne({
-      where: { id: req.params.id, user_id: req.user.id }
-    });
-
-    if (!routine) {
-      return res.status(404).json({ message: 'Rutina no encontrada' });
-    }
-
-    routine.is_favorite = !routine.is_favorite;
-    await routine.save();
-
-    return res.json(routine);
-  } catch (err) {
-    console.error('Error en PATCH /routines/:id/favorite:', err);
-    return res.status(500).json({ message: 'Error actualizando favorito' });
+    console.error('Error marcando favorita:', err);
+    res.status(500).json({ message: 'Error actualizando rutina' });
   }
 });
 

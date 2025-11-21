@@ -123,33 +123,30 @@ router.post('/finish', auth, async (req, res) => {
  * GET /api/training/history
  * Obtiene el historial de sesiones del usuario
  */
+// GET /api/training/history - Historial de entrenamientos
 router.get('/history', auth, async (req, res) => {
   try {
     const sessions = await TrainingSession.findAll({
       where: { user_id: req.user.id },
       order: [['start_time', 'DESC']],
+      limit: 50,
       include: [
-        {
-          model: Routine,
-          attributes: ['id', 'name', 'difficulty_level'],
+        { 
+          model: Routine, 
+          as: 'Routine',  // debe coincidir con el alias en models/index.js
+          attributes: ['id', 'name', 'difficulty_level'] 
         },
-        {
-          model: ExerciseLog,
-          include: [
-            {
-              model: Exercise,
-              attributes: ['id', 'name'],
-            }
-          ]
-        }
+        { 
+          model: ExerciseLog, 
+          as: 'ExerciseLogs',  // debe coincidir con el alias en models/index.js
+        },
       ],
-      limit: 50, // últimas 50 sesiones
     });
 
     res.json(sessions);
   } catch (err) {
     console.error('Error en GET /training/history:', err);
-    res.status(500).json({ message: 'Error obteniendo historial' });
+    res.status(500).json({ message: 'Error obteniendo historial', error: err.message });
   }
 });
 

@@ -26,11 +26,11 @@ User.hasMany(TrainingSession, { foreignKey: 'user_id', onDelete: 'CASCADE' });
 TrainingSession.belongsTo(User, { foreignKey: 'user_id' });
 
 // Routine <-> TrainingSession (1:N)
-Routine.hasMany(TrainingSession, { foreignKey: 'routine_id' });
-TrainingSession.belongsTo(Routine, { foreignKey: 'routine_id' });
+Routine.hasMany(TrainingSession, { foreignKey: 'routine_id', as: 'Sessions' });
+TrainingSession.belongsTo(Routine, { foreignKey: 'routine_id', as: 'Routine' });
 
 // TrainingSession <-> ExerciseLog (1:N)
-TrainingSession.hasMany(ExerciseLog, { foreignKey: 'session_id', as: 'ExerciseLogs', onDelete: 'CASCADE' });
+TrainingSession.hasMany(ExerciseLog, { foreignKey: 'session_id', as: 'ExerciseLogs' });
 ExerciseLog.belongsTo(TrainingSession, { foreignKey: 'session_id' });
 
 // Exercise <-> ExerciseLog (1:N)
