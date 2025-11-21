@@ -1,19 +1,26 @@
 const { Sequelize } = require('sequelize');
+require('dotenv').config();
 
-// Configuración de la conexión a PostgreSQL
 const sequelize = new Sequelize(process.env.DB_URL, {
-  dialect: 'postgres',
-  logging: process.env.NODE_ENV === 'development' ? console.log : false,
-  pool: {
-    max: 5,
-    min: 0,
-    acquire: 30000,
-    idle: 10000,
+  dialect: 'mysql',
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false,
+    },
   },
-  define: {
-    timestamps: true, // createdAt y updatedAt automáticos
-    underscored: false, // usar camelCase
-  },
+  logging: false,
 });
 
-module.exports = { sequelize };
+async function connectDB() {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Conectado a MySQL');
+    await sequelize.sync({ alter: true });
+    console.log('✅ Modelos sincronizados');
+  } catch (error) {
+    console.error('❌ Error conectando a MySQL:', error);
+  }
+}
+
+module.exports = { sequelize, connectDB };

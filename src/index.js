@@ -11,6 +11,8 @@ const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
 const routineRoutes = require('./routes/routines');
 const trainingRoutes = require('./routes/training');
+const foodRoutes = require('./routes/food');
+const activityRoutes = require('./routes/activity');
 
 const app = express();
 app.use(cors());
@@ -31,6 +33,8 @@ app.use('/api/training', trainingRoutes);
 app.use('/auth', authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/routines', routineRoutes);
+app.use('/api/food', foodRoutes);
+app.use('/api/activity', activityRoutes);
 
 const PORT = process.env.PORT || 4000;
 
