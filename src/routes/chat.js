@@ -3,7 +3,7 @@ const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { UserProfile, UserContext, Routine, Exercise } = require('../models');
 
-const XAI_API_KEY = process.env.XAI_API_KEY;
+const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
 // Definición de funciones disponibles para el chat
@@ -107,10 +107,10 @@ async function executeFunction(functionName, args, userId) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${XAI_API_KEY}`
+          'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'grok-3-fast',
+          model: 'grok-4-fast-reasoning',
           messages: [
             { role: 'system', content: generatePrompt.system },
             { role: 'user', content: generatePrompt.user }
@@ -223,7 +223,7 @@ router.post('/', auth, async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`
+        'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
         model: 'grok-4-fast-reasoning',
@@ -268,7 +268,7 @@ router.post('/', auth, async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${XAI_API_KEY}`
+          'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
           model: 'grok-4-fast-reasoning',
