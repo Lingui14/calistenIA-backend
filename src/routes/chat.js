@@ -14,7 +14,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model || 'grok-beta',
+        model: model || 'grok-4-fast-reasoning',
         messages: messages || [],
         max_tokens: max_tokens || 500,
       }),
