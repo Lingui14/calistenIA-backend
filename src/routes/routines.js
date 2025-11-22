@@ -152,22 +152,61 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // POST /api/routines/generate - Generar rutina de ejemplo (IA MVP)
+// POST /api/routines/generate - Generar rutina según perfil del usuario
 router.post('/generate', auth, async (req, res) => {
   try {
+    // Importar UserProfile si no está arriba
+    const { UserProfile } = require('../models');
+    
+    // Obtener perfil del usuario
+    const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
+    
+    const difficulty = profile?.experience || 'beginner';
+    const goal = profile?.goal || 'general';
+
+    // Ejercicios según nivel
+    const exercisesByLevel = {
+      beginner: [
+        { name: 'Flexiones de rodillas', sets: 3, reps: 10, rest_time: 60 },
+        { name: 'Sentadillas asistidas', sets: 3, reps: 12, rest_time: 60 },
+        { name: 'Plancha', sets: 3, reps: 20, rest_time: 45 },
+        { name: 'Puente de glúteos', sets: 3, reps: 15, rest_time: 45 },
+        { name: 'Fondos en silla', sets: 3, reps: 8, rest_time: 60 },
+      ],
+      intermediate: [
+        { name: 'Flexiones diamante', sets: 4, reps: 12, rest_time: 60 },
+        { name: 'Sentadillas búlgaras', sets: 3, reps: 10, rest_time: 75 },
+        { name: 'Dominadas australianas', sets: 4, reps: 10, rest_time: 60 },
+        { name: 'Dips en banco', sets: 3, reps: 12, rest_time: 60 },
+        { name: 'Plancha lateral', sets: 3, reps: 30, rest_time: 45 },
+      ],
+      advanced: [
+        { name: 'Flexiones archer', sets: 4, reps: 8, rest_time: 90 },
+        { name: 'Pistol squats', sets: 3, reps: 6, rest_time: 90 },
+        { name: 'Dominadas', sets: 4, reps: 10, rest_time: 90 },
+        { name: 'Dips en paralelas', sets: 4, reps: 12, rest_time: 75 },
+        { name: 'L-sit', sets: 3, reps: 15, rest_time: 60 },
+        { name: 'Muscle up negativas', sets: 3, reps: 5, rest_time: 120 },
+      ],
+    };
+
+    const exercises = exercisesByLevel[difficulty] || exercisesByLevel.beginner;
+
     const routine = await Routine.create({
       user_id: req.user.id,
-      name: 'Rutina IA (MVP)',
-      description: 'Rutina generada automáticamente',
-      difficulty_level: 'beginner',
+      name: `Rutina ${difficulty} - ${goal}`,
+      description: `Rutina generada para nivel ${difficulty}`,
+      difficulty_level: difficulty,
     });
 
-    const exercisesData = [
-      { routine_id: routine.id, name: 'Flexiones', sets: 3, reps: 10, rest_time: 60, order_index: 1 },
-      { routine_id: routine.id, name: 'Sentadillas', sets: 3, reps: 15, rest_time: 60, order_index: 2 },
-      { routine_id: routine.id, name: 'Dominadas asistidas', sets: 3, reps: 5, rest_time: 90, order_index: 3 },
-      { routine_id: routine.id, name: 'Plancha', sets: 3, reps: 30, rest_time: 45, order_index: 4 },
-      { routine_id: routine.id, name: 'Fondos en silla', sets: 3, reps: 8, rest_time: 60, order_index: 5 },
-    ];
+    const exercisesData = exercises.map((ex, index) => ({
+      routine_id: routine.id,
+      name: ex.name,
+      sets: ex.sets,
+      reps: ex.reps,
+      rest_time: ex.rest_time,
+      order_index: index + 1,
+    }));
 
     await Exercise.bulkCreate(exercisesData);
 
