@@ -111,8 +111,6 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-// src/routes/food.js - Agregar esta ruta al archivo existente
-
 // POST /api/food/analyze - Analizar imagen de comida con IA
 router.post('/analyze', auth, async (req, res) => {
   try {
