@@ -1,5 +1,7 @@
+// src/models/index.js (ACTUALIZADO)
 const User = require('./User');
 const UserProfile = require('./UserProfile');
+const UserContext = require('./UserContext');
 const Routine = require('./Routine');
 const Exercise = require('./Exercise');
 const TrainingSession = require('./TrainingSession');
@@ -12,6 +14,10 @@ const ActivityLog = require('./ActivityLog');
 // User <-> UserProfile (1:1)
 User.hasOne(UserProfile, { foreignKey: 'user_id', as: 'Profile' });
 UserProfile.belongsTo(User, { foreignKey: 'user_id' });
+
+// User <-> UserContext (1:1)
+User.hasOne(UserContext, { foreignKey: 'user_id', as: 'Context' });
+UserContext.belongsTo(User, { foreignKey: 'user_id' });
 
 // User <-> Routine (1:N)
 User.hasMany(Routine, { foreignKey: 'user_id', as: 'Routines' });
@@ -48,6 +54,7 @@ ActivityLog.belongsTo(User, { foreignKey: 'user_id' });
 module.exports = {
   User,
   UserProfile,
+  UserContext,
   Routine,
   Exercise,
   TrainingSession,

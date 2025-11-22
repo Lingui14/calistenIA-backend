@@ -1,278 +1,310 @@
+// src/routes/chat.js
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
-const { UserProfile, Routine, Exercise } = require('../models');
+const { UserProfile, UserContext, Routine, Exercise } = require('../models');
 
-const GROK_API_URL = 'https://api.x.ai/v1/chat/completions';
+const XAI_API_KEY = process.env.XAI_API_KEY;
+const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
-// Funciones disponibles para Grok
-const availableFunctions = {
-  // Actualizar perfil del usuario
-  update_profile: async (userId, args) => {
-    const profile = await UserProfile.findOne({ where: { user_id: userId } });
-    if (!profile) return { success: false, message: 'Perfil no encontrado' };
-
-    const updates = {};
-    if (args.experience) updates.experience_level = args.experience;
-    if (args.goal) updates.goal = args.goal;
-    if (args.available_days) updates.available_days = args.available_days;
-    if (args.session_duration) updates.session_duration = args.session_duration;
-
-    await profile.update(updates);
-    return { success: true, message: 'Perfil actualizado', profile: updates };
+// Definición de funciones disponibles para el chat
+const AVAILABLE_FUNCTIONS = [
+  {
+    name: 'get_profile',
+    description: 'Obtiene el perfil y contexto actual del usuario',
+    parameters: { type: 'object', properties: {}, required: [] }
   },
-
-  // Obtener perfil actual
-  get_profile: async (userId) => {
-    const profile = await UserProfile.findOne({ where: { user_id: userId } });
-    if (!profile) return { success: false, message: 'Perfil no encontrado' };
-    return {
-      success: true,
-      profile: {
-        experience: profile.experience_level,
-        goal: profile.goal,
-        available_days: profile.available_days,
-        session_duration: profile.session_duration,
-      },
-    };
-  },
-
-  // Obtener rutinas del usuario
-  get_routines: async (userId) => {
-    const routines = await Routine.findAll({
-      where: { user_id: userId },
-      include: [{ model: Exercise, as: 'Exercises' }],
-      limit: 5,
-    });
-    return {
-      success: true,
-      routines: routines.map(r => ({
-        name: r.name,
-        difficulty: r.difficulty_level,
-        exercises: r.Exercises?.map(e => e.name) || [],
-      })),
-    };
-  },
-
-  // Generar nueva rutina
-  generate_routine: async (userId, args) => {
-    const profile = await UserProfile.findOne({ where: { user_id: userId } });
-    
-    const difficulty = args.difficulty || profile?.experience || 'beginner';
-    const goal = args.goal || profile?.goal || 'general';
-
-    // Ejercicios según nivel
-    const exercisesByLevel = {
-      beginner: [
-        { name: 'Flexiones de rodillas', sets: 3, reps: 10, rest_time: 60 },
-        { name: 'Sentadillas asistidas', sets: 3, reps: 12, rest_time: 60 },
-        { name: 'Plancha', sets: 3, reps: 20, rest_time: 45 },
-        { name: 'Puente de glúteos', sets: 3, reps: 15, rest_time: 45 },
-      ],
-      intermediate: [
-        { name: 'Flexiones diamante', sets: 4, reps: 12, rest_time: 60 },
-        { name: 'Sentadillas búlgaras', sets: 3, reps: 10, rest_time: 75 },
-        { name: 'Dominadas australianas', sets: 4, reps: 10, rest_time: 60 },
-        { name: 'Dips en banco', sets: 3, reps: 12, rest_time: 60 },
-        { name: 'Plancha lateral', sets: 3, reps: 30, rest_time: 45 },
-      ],
-      advanced: [
-        { name: 'Flexiones archer', sets: 4, reps: 8, rest_time: 90 },
-        { name: 'Pistol squats', sets: 3, reps: 6, rest_time: 90 },
-        { name: 'Dominadas', sets: 4, reps: 10, rest_time: 90 },
-        { name: 'Dips en paralelas', sets: 4, reps: 12, rest_time: 75 },
-        { name: 'L-sit', sets: 3, reps: 15, rest_time: 60 },
-        { name: 'Muscle up negativas', sets: 3, reps: 5, rest_time: 120 },
-      ],
-    };
-
-    const exercises = exercisesByLevel[difficulty] || exercisesByLevel.beginner;
-
-    const routine = await Routine.create({
-      user_id: userId,
-      name: `Rutina ${difficulty} - ${goal}`,
-      description: `Rutina generada por CalistenIA para nivel ${difficulty}`,
-      difficulty_level: difficulty,
-    });
-
-    for (let i = 0; i < exercises.length; i++) {
-      await Exercise.create({
-        routine_id: routine.id,
-        ...exercises[i],
-        order_index: i,
-      });
+  {
+    name: 'update_context',
+    description: 'Actualiza las preferencias de entrenamiento del usuario',
+    parameters: {
+      type: 'object',
+      properties: {
+        training_focus: { type: 'string', enum: ['calisthenics', 'strength', 'mobility', 'skills', 'cardio'] },
+        preferred_duration: { type: 'integer', description: 'Duración preferida en minutos' },
+        preferred_intensity: { type: 'string', enum: ['low', 'moderate', 'high', 'extreme'] },
+        preferred_workout_types: { type: 'array', items: { type: 'string' } },
+        preferred_exercises: { type: 'array', items: { type: 'string' } },
+        avoided_exercises: { type: 'array', items: { type: 'string' } },
+        injuries: { type: 'array', items: { type: 'string' } }
+      }
     }
-
-    const fullRoutine = await Routine.findByPk(routine.id, {
-      include: [{ model: Exercise, as: 'Exercises' }],
-    });
-
-    return {
-      success: true,
-      message: `Rutina ${difficulty} creada`,
-      routine: {
-        id: fullRoutine.id,
-        name: fullRoutine.name,
-        difficulty: fullRoutine.difficulty_level,
-        exercises: fullRoutine.Exercises?.map(e => ({
-          name: e.name,
-          sets: e.sets,
-          reps: e.reps,
-        })),
-      },
-    };
-  },
-};
-
-// Definición de tools para Grok
-const tools = [
-  {
-    type: 'function',
-    function: {
-      name: 'update_profile',
-      description: 'Actualiza el perfil del usuario (nivel de experiencia, objetivo, días disponibles, duración de sesión)',
-      parameters: {
-        type: 'object',
-        properties: {
-          experience: {
-            type: 'string',
-            enum: ['beginner', 'intermediate', 'advanced'],
-            description: 'Nivel de experiencia del usuario',
-          },
-          goal: {
-            type: 'string',
-            enum: ['build_muscle', 'lose_weight', 'maintain', 'flexibility', 'strength'],
-            description: 'Objetivo del usuario',
-          },
-          available_days: {
-            type: 'number',
-            description: 'Días disponibles para entrenar por semana (1-7)',
-          },
-          session_duration: {
-            type: 'number',
-            description: 'Duración de cada sesión en minutos',
-          },
-        },
-      },
-    },
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_profile',
-      description: 'Obtiene el perfil actual del usuario',
-      parameters: { type: 'object', properties: {} },
-    },
+    name: 'generate_routine',
+    description: 'Genera una nueva rutina de entrenamiento personalizada',
+    parameters: {
+      type: 'object',
+      properties: {
+        workout_type: { type: 'string', enum: ['strength', 'amrap', 'hiit', 'emom', 'fullbody', 'push', 'pull', 'legs'] },
+        duration: { type: 'integer', description: 'Duración en minutos' },
+        intensity: { type: 'string', enum: ['low', 'moderate', 'high', 'extreme'] },
+        custom_request: { type: 'string', description: 'Petición específica del usuario' }
+      }
+    }
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_routines',
-      description: 'Obtiene las rutinas del usuario',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'generate_routine',
-      description: 'Genera una nueva rutina de ejercicios para el usuario',
-      parameters: {
-        type: 'object',
-        properties: {
-          difficulty: {
-            type: 'string',
-            enum: ['beginner', 'intermediate', 'advanced'],
-            description: 'Nivel de dificultad de la rutina',
-          },
-          goal: {
-            type: 'string',
-            description: 'Objetivo específico de la rutina',
-          },
-        },
-      },
-    },
-  },
+    name: 'get_routines',
+    description: 'Obtiene las rutinas del usuario',
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', default: 5 }
+      }
+    }
+  }
 ];
 
-router.post('/', auth, async (req, res) => {
-  try {
-    const { messages, model, max_tokens } = req.body;
+const SYSTEM_PROMPT = `Eres CalistenIA, un coach experto en calistenia y fitness.
+Eres amigable, motivador y das consejos prácticos en español.
 
-    if (!process.env.REACT_APP_XAI_API_KEY) {
-      return res.status(500).json({ message: 'API key no configurada' });
+IMPORTANTE - USA LAS FUNCIONES cuando corresponda:
+- Si el usuario pregunta por su perfil/nivel → usa get_profile
+- Si quiere cambiar preferencias, ejercicios, lesiones → usa update_context  
+- Si pide generar/crear una rutina → usa generate_routine
+- Si pregunta por sus rutinas existentes → usa get_routines
+
+Por defecto, asume siempre CALISTENIA (peso corporal) si no hay contexto específico.
+
+Cuando generes una rutina con generate_routine, después de crearla responde con:
+"¡Tu rutina está lista! 🎉 [ROUTINE_BUTTON:ID_DE_RUTINA]"
+
+Esto mostrará un botón para ir a la rutina.`;
+
+/**
+ * Ejecuta las funciones llamadas por el modelo
+ */
+async function executeFunction(functionName, args, userId) {
+  switch (functionName) {
+    case 'get_profile': {
+      const [profile, context] = await Promise.all([
+        UserProfile.findOne({ where: { user_id: userId } }),
+        UserContext.findOne({ where: { user_id: userId } })
+      ]);
+      return { profile, context };
     }
 
-    // Primera llamada a Grok
-    const response = await fetch(GROK_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: model || 'grok-4-fast-reasoning',
-        messages: messages || [],
-        max_tokens: max_tokens || 500,
-        tools: tools,
-        tool_choice: 'auto',
-      }),
-    });
-
-    let data = await response.json();
-
-    if (!response.ok) {
-      console.error('Error de Grok:', data);
-      return res.status(500).json({ error: data });
-    }
-
-    // Si Grok quiere usar una función
-    if (data.choices[0]?.message?.tool_calls) {
-      const toolCalls = data.choices[0].message.tool_calls;
-      const toolResults = [];
-
-      for (const toolCall of toolCalls) {
-        const functionName = toolCall.function.name;
-        const args = JSON.parse(toolCall.function.arguments || '{}');
-
-        console.log(`Ejecutando función: ${functionName}`, args);
-
-        if (availableFunctions[functionName]) {
-          const result = await availableFunctions[functionName](req.user.id, args);
-          toolResults.push({
-            tool_call_id: toolCall.id,
-            role: 'tool',
-            content: JSON.stringify(result),
-          });
-        }
+    case 'update_context': {
+      let context = await UserContext.findOne({ where: { user_id: userId } });
+      if (!context) {
+        context = await UserContext.create({ user_id: userId, ...args });
+      } else {
+        await context.update(args);
       }
+      return { success: true, context };
+    }
 
-      // Segunda llamada con resultados de las funciones
-      const followUpMessages = [
-        ...messages,
-        data.choices[0].message,
-        ...toolResults,
-      ];
+    case 'generate_routine': {
+      // Obtener perfil y contexto
+      const [profile, context] = await Promise.all([
+        UserProfile.findOne({ where: { user_id: userId } }),
+        UserContext.findOne({ where: { user_id: userId } })
+      ]);
 
-      const followUpResponse = await fetch(GROK_API_URL, {
+      // Llamar a la API de generación
+      const generatePrompt = buildRoutinePrompt(profile, context, args);
+      
+      const response = await fetch(XAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
+          'Authorization': `Bearer ${XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: model || 'grok-4-fast-reasoning',
-          messages: followUpMessages,
-          max_tokens: max_tokens || 500,
-        }),
+          model: 'grok-3-fast',
+          messages: [
+            { role: 'system', content: generatePrompt.system },
+            { role: 'user', content: generatePrompt.user }
+          ],
+          max_tokens: 2000,
+          temperature: 0.7
+        })
+      });
+
+      const data = await response.json();
+      const aiResponse = data.choices[0]?.message?.content;
+      
+      // Parsear y guardar rutina
+      const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
+      const routineData = JSON.parse(cleanJson);
+
+      const routine = await Routine.create({
+        user_id: userId,
+        name: routineData.name,
+        description: routineData.description,
+        difficulty_level: routineData.difficulty_level || 'intermediate',
+      });
+
+      if (routineData.exercises?.length > 0) {
+        const exercisesData = routineData.exercises.map((ex, index) => ({
+          routine_id: routine.id,
+          name: ex.name,
+          description: ex.description || '',
+          exercise_type: ex.exercise_type || 'standard',
+          sets: ex.sets || 3,
+          reps: ex.reps || 10,
+          rest_time: ex.rest_time || 60,
+          amrap_duration: ex.amrap_duration,
+          hiit_work_time: ex.hiit_work_time,
+          hiit_rest_time: ex.hiit_rest_time,
+          hiit_rounds: ex.hiit_rounds,
+          target_metric: ex.target_metric || 'reps',
+          notes: ex.notes || '',
+          order_index: index + 1,
+        }));
+        await Exercise.bulkCreate(exercisesData);
+      }
+
+      return { 
+        success: true, 
+        routine_id: routine.id,
+        routine_name: routine.name,
+        exercises_count: routineData.exercises?.length || 0
+      };
+    }
+
+    case 'get_routines': {
+      const routines = await Routine.findAll({
+        where: { user_id: userId },
+        order: [['createdAt', 'DESC']],
+        limit: args.limit || 5,
+        include: [{ model: Exercise, as: 'Exercises' }]
+      });
+      return { routines: routines.map(r => ({ id: r.id, name: r.name, exercises: r.Exercises?.length })) };
+    }
+
+    default:
+      return { error: 'Función no reconocida' };
+  }
+}
+
+function buildRoutinePrompt(profile, context, args) {
+  const system = `Genera una rutina de calistenia en formato JSON.
+Nivel usuario: ${profile?.experience_level || 'beginner'}
+Equipo: ${JSON.stringify(profile?.available_equipment || [])}
+Lesiones a evitar: ${JSON.stringify(context?.injuries || [])}
+
+RESPONDE SOLO CON JSON:
+{
+  "name": "Nombre",
+  "description": "Descripción",
+  "difficulty_level": "beginner|intermediate|advanced",
+  "exercises": [
+    {
+      "name": "Ejercicio",
+      "exercise_type": "standard|amrap|hiit",
+      "sets": 3,
+      "reps": 10,
+      "rest_time": 60,
+      "amrap_duration": null,
+      "hiit_work_time": null,
+      "hiit_rest_time": null,
+      "hiit_rounds": null,
+      "target_metric": "reps",
+      "notes": ""
+    }
+  ]
+}`;
+
+  const user = `Genera rutina: tipo=${args.workout_type || 'fullbody'}, duración=${args.duration || 45}min, intensidad=${args.intensity || 'moderate'}. ${args.custom_request || ''}`;
+
+  return { system, user };
+}
+
+/**
+ * POST /api/chat
+ * Endpoint principal del chat con function calling
+ */
+router.post('/', auth, async (req, res) => {
+  try {
+    const { messages } = req.body;
+
+    // Primera llamada a Grok con tools
+    const response = await fetch(XAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${XAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'grok-4-fast-reasoning',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          ...messages
+        ],
+        tools: AVAILABLE_FUNCTIONS.map(f => ({
+          type: 'function',
+          function: f
+        })),
+        tool_choice: 'auto',
+        max_tokens: 1000
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Error comunicándose con Grok');
+    }
+
+    let data = await response.json();
+    let assistantMessage = data.choices[0]?.message;
+
+    // Si hay tool_calls, ejecutarlas
+    if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+      const toolResults = [];
+
+      for (const toolCall of assistantMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments || '{}');
+        
+        const result = await executeFunction(functionName, functionArgs, req.user.id);
+        toolResults.push({
+          tool_call_id: toolCall.id,
+          role: 'tool',
+          content: JSON.stringify(result)
+        });
+      }
+
+      // Segunda llamada con resultados de las funciones
+      const followUpResponse = await fetch(XAI_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${XAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'grok-4-fast-reasoning',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            ...messages,
+            assistantMessage,
+            ...toolResults
+          ],
+          max_tokens: 1000
+        })
       });
 
       data = await followUpResponse.json();
+      assistantMessage = data.choices[0]?.message;
     }
 
-    res.json(data);
+    res.json({
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: assistantMessage.content
+        }
+      }]
+    });
+
   } catch (err) {
-    console.error('Error en chat:', err);
-    res.status(500).json({ message: 'Error en el servidor' });
+    console.error('Error en /api/chat:', err);
+    res.status(500).json({ 
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: 'Lo siento, hubo un error. Intenta de nuevo.'
+        }
+      }]
+    });
   }
 });
 
