@@ -161,7 +161,7 @@ router.post('/generate', auth, async (req, res) => {
     // Obtener perfil del usuario
     const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
     
-    const difficulty = profile?.experience || 'beginner';
+    const difficulty = profile?.experience_level || profile?.experience || 'beginner';
     const goal = profile?.goal || 'general';
 
     // Ejercicios según nivel

@@ -1,3 +1,4 @@
+// src/routes/profile.js
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { UserProfile } = require('../models');

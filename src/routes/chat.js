@@ -12,7 +12,7 @@ const availableFunctions = {
     if (!profile) return { success: false, message: 'Perfil no encontrado' };
 
     const updates = {};
-    if (args.experience) updates.experience = args.experience;
+    if (args.experience) updates.experience_level = args.experience;
     if (args.goal) updates.goal = args.goal;
     if (args.available_days) updates.available_days = args.available_days;
     if (args.session_duration) updates.session_duration = args.session_duration;
@@ -28,7 +28,7 @@ const availableFunctions = {
     return {
       success: true,
       profile: {
-        experience: profile.experience,
+        experience: profile.experience_level,
         goal: profile.goal,
         available_days: profile.available_days,
         session_duration: profile.session_duration,
