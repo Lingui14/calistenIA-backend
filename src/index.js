@@ -13,12 +13,14 @@ const routineRoutes = require('./routes/routines');
 const trainingRoutes = require('./routes/training');
 const foodRoutes = require('./routes/food');
 const activityRoutes = require('./routes/activity');
+const chatRoutes = require('./routes/chat');
 
 const app = express();
 app.use(cors());
 app.use(helmet());
 app.use(express.json());
 app.use(morgan('dev'));
+app.use('/api/chat', chatRoutes);
 
 // Health check
 app.get('/ping', (req, res) => res.json({ ok: true }));
