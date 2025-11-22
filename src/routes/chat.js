@@ -198,7 +198,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const { messages, model, max_tokens } = req.body;
 
-    if (!process.env.GROK_API_KEY) {
+    if (!process.env.REACT_APP_XAI_API_KEY) {
       return res.status(500).json({ message: 'API key no configurada' });
     }
 
@@ -207,10 +207,10 @@ router.post('/', auth, async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+        'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model || 'grok-beta',
+        model: model || 'grok-4-fast-reasoning',
         messages: messages || [],
         max_tokens: max_tokens || 500,
         tools: tools,
@@ -257,10 +257,10 @@ router.post('/', auth, async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+          'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: model || 'grok-beta',
+          model: model || 'grok-4-fast-reasoning',
           messages: followUpMessages,
           max_tokens: max_tokens || 500,
         }),
