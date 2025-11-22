@@ -111,4 +111,97 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
+// src/routes/food.js - Agregar esta ruta al archivo existente
+
+// POST /api/food/analyze - Analizar imagen de comida con IA
+router.post('/analyze', auth, async (req, res) => {
+  try {
+    const { image } = req.body; // base64 string
+
+    if (!image) {
+      return res.status(400).json({ message: 'Imagen requerida' });
+    }
+
+    // Limpiar el base64 si viene con prefijo data:image
+    const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-vision-beta',
+        messages: [
+          {
+            role: 'system',
+            content: `Eres un nutricionista experto. Analiza la imagen de comida y responde SOLO con un JSON válido (sin markdown, sin backticks) con este formato exacto:
+{
+  "name": "nombre del plato en español",
+  "calories": número estimado de calorías,
+  "protein": gramos de proteína,
+  "carbs": gramos de carbohidratos,
+  "fat": gramos de grasa,
+  "confidence": "alta" | "media" | "baja",
+  "notes": "observaciones breves sobre la porción o ingredientes"
+}
+
+Si no puedes identificar comida en la imagen, responde:
+{"error": "No se detectó comida en la imagen"}`
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64Data}`,
+                },
+              },
+              {
+                type: 'text',
+                text: 'Analiza esta comida y estima sus valores nutricionales.',
+              },
+            ],
+          },
+        ],
+        max_tokens: 500,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Error de Grok:', errorData);
+      return res.status(500).json({ message: 'Error al analizar imagen' });
+    }
+
+    const data = await response.json();
+    const content = data.choices[0]?.message?.content;
+
+    if (!content) {
+      return res.status(500).json({ message: 'Respuesta vacía de IA' });
+    }
+
+    // Parsear JSON de la respuesta
+    try {
+      const analysis = JSON.parse(content);
+      
+      if (analysis.error) {
+        return res.status(400).json({ message: analysis.error });
+      }
+
+      res.json(analysis);
+    } catch (parseErr) {
+      console.error('Error parseando respuesta:', content);
+      res.status(500).json({ message: 'Error procesando respuesta de IA' });
+    }
+
+  } catch (err) {
+    console.error('Error analizando imagen:', err);
+    res.status(500).json({ message: 'Error interno al analizar' });
+  }
+});
+
 module.exports = router;
