@@ -1,6 +1,9 @@
-// src/routes/routines.js (REEMPLAZAR las rutas de IA al final del archivo)
+// src/routes/routines.js (COMPLETO Y CORREGIDO)
+const router = require('express').Router();
+const auth = require('../middlewares/auth');
+const { Routine, Exercise, UserProfile } = require('../models');
 
-const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
+const XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
 /**
@@ -12,7 +15,6 @@ router.post('/generate-ai', auth, async (req, res) => {
     const { customPrompt, workoutType, duration, intensity } = req.body;
 
     // Obtener perfil del usuario
-    const { UserProfile } = require('../models');
     const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
 
     // Construir prompt para Grok
@@ -82,7 +84,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
         'Authorization': `Bearer ${XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-4-fast-reasoning',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -186,7 +188,87 @@ router.get('/ai-suggestions', auth, async (req, res) => {
   }
 });
 
-// GET /api/routines/:id - Obtener rutina por ID
+/**
+ * GET /api/routines/active
+ * Obtiene la rutina activa del día
+ */
+router.get('/active', auth, async (req, res) => {
+  try {
+    const routine = await Routine.findOne({
+      where: { user_id: req.user.id },
+      order: [['createdAt', 'DESC']],
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    if (!routine) {
+      return res.json(null);
+    }
+
+    res.json(routine);
+  } catch (err) {
+    console.error('Error obteniendo rutina activa:', err);
+    res.status(500).json({ message: 'Error obteniendo rutina activa' });
+  }
+});
+
+/**
+ * POST /api/routines/generate
+ * Genera una rutina básica sin IA
+ */
+router.post('/generate', auth, async (req, res) => {
+  try {
+    const routine = await Routine.create({
+      user_id: req.user.id,
+      name: 'Rutina Básica del Día',
+      description: 'Rutina generada automáticamente',
+      difficulty_level: 'intermediate',
+    });
+
+    const exercises = [
+      { name: 'Push-ups', sets: 3, reps: 15, rest_time: 60, order_index: 1 },
+      { name: 'Squats', sets: 3, reps: 20, rest_time: 60, order_index: 2 },
+      { name: 'Plank', sets: 3, reps: 30, rest_time: 45, order_index: 3 },
+      { name: 'Lunges', sets: 3, reps: 12, rest_time: 60, order_index: 4 },
+    ];
+
+    await Exercise.bulkCreate(
+      exercises.map(ex => ({ ...ex, routine_id: routine.id }))
+    );
+
+    const fullRoutine = await Routine.findByPk(routine.id, {
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    res.json(fullRoutine);
+  } catch (err) {
+    console.error('Error generando rutina:', err);
+    res.status(500).json({ message: 'Error generando rutina' });
+  }
+});
+
+/**
+ * GET /api/routines
+ * Obtiene todas las rutinas del usuario
+ */
+router.get('/', auth, async (req, res) => {
+  try {
+    const routines = await Routine.findAll({
+      where: { user_id: req.user.id },
+      order: [['createdAt', 'DESC']],
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    res.json(routines);
+  } catch (err) {
+    console.error('Error obteniendo rutinas:', err);
+    res.status(500).json({ message: 'Error obteniendo rutinas' });
+  }
+});
+
+/**
+ * GET /api/routines/:id
+ * Obtiene una rutina específica por ID
+ */
 router.get('/:id', auth, async (req, res) => {
   try {
     const routine = await Routine.findOne({
@@ -205,6 +287,78 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) {
     console.error('Error obteniendo rutina:', err);
     res.status(500).json({ message: 'Error obteniendo rutina' });
+  }
+});
+
+/**
+ * POST /api/routines
+ * Crea una rutina personalizada
+ */
+router.post('/', auth, async (req, res) => {
+  try {
+    const { name, description, difficulty_level, exercises } = req.body;
+
+    const routine = await Routine.create({
+      user_id: req.user.id,
+      name,
+      description,
+      difficulty_level: difficulty_level || 'custom',
+    });
+
+    if (exercises?.length > 0) {
+      const exercisesData = exercises.map((ex, index) => ({
+        routine_id: routine.id,
+        name: ex.name,
+        description: ex.description || '',
+        exercise_type: ex.exercise_type || 'standard',
+        sets: ex.sets,
+        reps: ex.reps,
+        rest_time: ex.rest_time,
+        amrap_duration: ex.amrap_duration,
+        hiit_work_time: ex.hiit_work_time,
+        hiit_rest_time: ex.hiit_rest_time,
+        hiit_rounds: ex.hiit_rounds,
+        emom_duration: ex.emom_duration,
+        notes: ex.notes || '',
+        order_index: index + 1,
+      }));
+
+      await Exercise.bulkCreate(exercisesData);
+    }
+
+    const fullRoutine = await Routine.findByPk(routine.id, {
+      include: [{ model: Exercise, as: 'Exercises' }],
+    });
+
+    res.json(fullRoutine);
+  } catch (err) {
+    console.error('Error creando rutina:', err);
+    res.status(500).json({ message: 'Error creando rutina' });
+  }
+});
+
+/**
+ * DELETE /api/routines/:id
+ * Elimina una rutina
+ */
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const routine = await Routine.findOne({
+      where: { 
+        id: req.params.id, 
+        user_id: req.user.id 
+      }
+    });
+
+    if (!routine) {
+      return res.status(404).json({ message: 'Rutina no encontrada' });
+    }
+
+    await routine.destroy();
+    res.json({ message: 'Rutina eliminada' });
+  } catch (err) {
+    console.error('Error eliminando rutina:', err);
+    res.status(500).json({ message: 'Error eliminando rutina' });
   }
 });
 
