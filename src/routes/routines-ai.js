@@ -4,7 +4,7 @@ const auth = require('../middlewares/auth');
 const { Routine, Exercise, UserProfile, UserContext, TrainingSession, ExerciseLog } = require('../models');
 const { Op } = require('sequelize');
 
-const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
+const REACT_APP_REACT_APP_XAI_API_KEY = process.env.REACT_APP_REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
 /**
@@ -140,7 +140,7 @@ router.post('/generate-ai', auth, async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
+        'Authorization': `Bearer ${REACT_APP_REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
         model: 'grok-3-fast',
