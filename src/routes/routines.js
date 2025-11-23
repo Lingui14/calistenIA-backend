@@ -2,20 +2,28 @@ const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { Routine, Exercise } = require('../models');
 
-// GET /api/routines - Todas las rutinas del usuario
-router.get('/', auth, async (req, res) => {
+// GET /api/routines/:id - Obtener una rutina específica por ID
+router.get('/:id', auth, async (req, res) => {
   try {
-    const routines = await Routine.findAll({
-      where: { user_id: req.user.id },
-      order: [['createdAt', 'DESC']],
+    const routine = await Routine.findOne({
+      where: { 
+        id: req.params.id, 
+        user_id: req.user.id 
+      },
       include: [{ model: Exercise, as: 'Exercises' }],
     });
-    res.json(routines);
+
+    if (!routine) {
+      return res.status(404).json({ message: 'Rutina no encontrada' });
+    }
+
+    res.json(routine);
   } catch (err) {
-    console.error('Error obteniendo rutinas:', err);
-    res.status(500).json({ message: 'Error obteniendo rutinas' });
+    console.error('Error obteniendo rutina:', err);
+    res.status(500).json({ message: 'Error obteniendo rutina' });
   }
 });
+
 
 // GET /api/routines/active - Última rutina creada
 router.get('/active', auth, async (req, res) => {
