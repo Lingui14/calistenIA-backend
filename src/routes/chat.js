@@ -138,7 +138,7 @@ RECUERDA: Mínimo 60% HIIT/AMRAP, nombres épicos, intensidad máxima.`;
       'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'grok-3-fast',
+      model: 'grok-4-fast-reasoning',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
@@ -246,7 +246,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-3-fast',
+        model: 'grok-4-fast-reasoning',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           ...messages
@@ -295,7 +295,7 @@ router.post('/', auth, async (req, res) => {
           'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'grok-3-fast',
+          model: 'grok-4-fast-reasoning',
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             ...messages,
