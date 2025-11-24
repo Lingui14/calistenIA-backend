@@ -50,7 +50,7 @@ async function start() {
     await sequelize.authenticate();
     console.log('✅ Conectado a la BD');
 
-    await sequelize.sync({ alter: true });
+    await sequelize.sync();
     console.log('✅ Tablas sincronizadas');
 
     app.listen(PORT, () => {
