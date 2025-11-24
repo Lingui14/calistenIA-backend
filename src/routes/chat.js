@@ -290,7 +290,7 @@ Después de generarla, responde con formato:
         'Authorization': `Bearer ${XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-3-fast',
+        model: 'grok-4-fast-reasoning',
         messages: messages,
         functions: AVAILABLE_FUNCTIONS,
         function_call: 'auto',
@@ -361,7 +361,7 @@ Después de generarla, responde con formato:
           'Authorization': `Bearer ${XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: 'grok-3-fast',
+          model: 'grok-4-fast-reasoning',
           messages: [
             ...messages,
             choice.message,
