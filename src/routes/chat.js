@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
-const { UserProfile, Routine, Exercise } = require('../models');
+const { UserProfile, UserContext, Routine, Exercise } = require('../models');
 
 const GROK_API_URL = 'https://api.x.ai/v1/chat/completions';
 
@@ -9,54 +9,70 @@ const SYSTEM_PROMPT = `Eres CalistenIA, un coach de fitness experto y amigable.
 
 COMPORTAMIENTO:
 - Responde de forma conversacional y motivadora
-- Adapta las rutinas a lo que el usuario pide (calistenia, halterofilia, crossfit, etc.)
-- Si el usuario menciona un deporte específico, incluye ejercicios de ese deporte
+- Adapta las rutinas a lo que el usuario pide
 - Usa nombres COMUNES de ejercicios, nunca nombres épicos o inventados
+- IMPORTANTE: Cuando el usuario te diga qué tipo de entrenamiento hace (halterofilia, crossfit, calistenia, pesas, etc.), USA la función update_training_context para guardarlo
+
+CUANDO EL USUARIO MENCIONE SU TIPO DE ENTRENAMIENTO:
+- Si dice "hago halterofilia" -> guarda training_focus: "weightlifting"
+- Si dice "hago crossfit" -> guarda training_focus: "crossfit"  
+- Si dice "hago calistenia" -> guarda training_focus: "calisthenics"
+- Si dice "mezclo pesas y calistenia" -> guarda training_focus: "mixed"
+- Si menciona ejercicios que le gustan -> guarda en preferred_exercises
 
 CUANDO GENERES RUTINAS:
-- Usa nombres claros: "Flexiones", "Sentadillas", "Press de banca", "Clean and Jerk"
+- Usa nombres claros: "Flexiones", "Sentadillas", "Clean and Jerk", "Snatch"
 - Incluye descripción de cómo hacer cada ejercicio
-- Adapta la dificultad al nivel del usuario
-- Si mencionan halterofilia/pesas: incluye ejercicios con barra y mancuernas
-- Si mencionan calistenia: usa peso corporal
-- Si no especifican: mezcla ambos
+- Adapta al tipo de entrenamiento del usuario (usa su training_focus)
 
 IMPORTANTE - DESPUÉS DE GENERAR UNA RUTINA:
-Cuando la función generate_routine se ejecute exitosamente y recibas el resultado con routine_id, SIEMPRE debes responder incluyendo este patrón exacto al final:
-
-[ROUTINE_BUTTON:ID]
-
-Donde ID es el routine_id que recibiste del resultado de la función. Esto es OBLIGATORIO para que el usuario pueda ver el botón de ir a la rutina en la app.
-
-Ejemplo de respuesta después de generar rutina:
-"¡Listo! He creado tu rutina de halterofilia con 5 ejercicios enfocados en fuerza explosiva. Incluye Clean and Jerk, Snatch, Front Squat y más.
-
-[ROUTINE_BUTTON:123]"`;
+Incluye este patrón al final: [ROUTINE_BUTTON:ID]
+Donde ID es el routine_id que recibiste.`;
 
 // Función para generar rutina con IA
 async function generateRoutineWithAI(userId, args) {
   const profile = await UserProfile.findOne({ where: { user_id: userId } });
+  const context = await UserContext.findOne({ where: { user_id: userId } });
   
+  // Determinar tipo de entrenamiento
+  const trainingFocus = args.workout_type || context?.training_focus || 'mixed';
+  
+  let exerciseStyle = '';
+  if (trainingFocus === 'weightlifting' || trainingFocus === 'halterofilia') {
+    exerciseStyle = 'Incluye ejercicios olímpicos: Clean, Snatch, Jerk, Front Squat, Overhead Squat, Deadlift';
+  } else if (trainingFocus === 'crossfit') {
+    exerciseStyle = 'Mezcla ejercicios de halterofilia con calistenia y cardio: Thrusters, Wall Balls, Box Jumps, Burpees, Pull-ups';
+  } else if (trainingFocus === 'mixed') {
+    exerciseStyle = 'Mezcla ejercicios con peso (barra, mancuernas) y peso corporal';
+  } else {
+    exerciseStyle = 'Usa ejercicios de peso corporal: Flexiones, Dominadas, Sentadillas, Fondos';
+  }
+
   const routinePrompt = `Genera una rutina de ejercicios con estas características:
 - Nivel: ${args.difficulty || profile?.experience_level || 'intermediate'}
 - Objetivo: ${args.goal || profile?.goal || 'fuerza general'}
-- Tipo de entrenamiento: ${args.workout_type || 'mixto (calistenia y pesas)'}
+- Tipo de entrenamiento preferido: ${trainingFocus}
+- Ejercicios favoritos del usuario: ${JSON.stringify(context?.preferred_exercises || [])}
 ${args.custom_request ? `- Petición especial: ${args.custom_request}` : ''}
 
-REGLAS OBLIGATORIAS:
-1. Usa NOMBRES COMUNES de ejercicios (ej: "Flexiones", "Sentadillas", "Press militar")
-2. Cada ejercicio DEBE tener una descripción clara de cómo ejecutarlo
-3. Incluye 4-6 ejercicios variados
+ESTILO DE EJERCICIOS:
+${exerciseStyle}
 
-RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
+REGLAS OBLIGATORIAS:
+1. Usa NOMBRES COMUNES de ejercicios
+2. Cada ejercicio DEBE tener una descripción clara
+3. Incluye 4-6 ejercicios variados
+4. Adapta al tipo de entrenamiento: ${trainingFocus}
+
+RESPONDE SOLO CON JSON VÁLIDO:
 {
-  "name": "Nombre descriptivo de la rutina",
-  "description": "Objetivo de la rutina en 1 línea",
+  "name": "Rutina de [tipo] - [objetivo]",
+  "description": "Descripción breve",
   "difficulty_level": "beginner|intermediate|advanced",
   "exercises": [
     {
       "name": "Nombre común del ejercicio",
-      "description": "Posición inicial, movimiento y tips de forma",
+      "description": "Posición inicial, movimiento y tips",
       "sets": 3,
       "reps": 10,
       "rest_time": 60,
@@ -76,7 +92,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       body: JSON.stringify({
         model: 'grok-4-fast-reasoning',
         messages: [
-          { role: 'system', content: 'Eres un experto en fitness. Genera rutinas con ejercicios claros y descripciones detalladas. Responde SOLO con JSON válido.' },
+          { role: 'system', content: 'Eres un experto en fitness. Genera rutinas personalizadas. Responde SOLO con JSON válido.' },
           { role: 'user', content: routinePrompt }
         ],
         max_tokens: 2000,
@@ -87,12 +103,10 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || '';
     
-    // Limpiar markdown si viene
     content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     
     const routineData = JSON.parse(content);
 
-    // Crear rutina en BD
     const routine = await Routine.create({
       user_id: userId,
       name: routineData.name,
@@ -100,7 +114,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       difficulty_level: routineData.difficulty_level || 'intermediate',
     });
 
-    // Crear ejercicios con descripciones
     if (routineData.exercises?.length > 0) {
       for (let i = 0; i < routineData.exercises.length; i++) {
         const ex = routineData.exercises[i];
@@ -118,7 +131,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       }
     }
 
-    // Obtener rutina completa
     const fullRoutine = await Routine.findByPk(routine.id, {
       include: [{ model: Exercise, as: 'Exercises' }],
     });
@@ -162,17 +174,50 @@ const availableFunctions = {
     return { success: true, message: 'Perfil actualizado', profile: updates };
   },
 
+  // NUEVA FUNCIÓN: Actualizar contexto de entrenamiento
+  update_training_context: async (userId, args) => {
+    let context = await UserContext.findOne({ where: { user_id: userId } });
+    
+    if (!context) {
+      context = await UserContext.create({ user_id: userId });
+    }
+
+    const updates = {};
+    if (args.training_focus) updates.training_focus = args.training_focus;
+    if (args.preferred_exercises) updates.preferred_exercises = args.preferred_exercises;
+    if (args.avoided_exercises) updates.avoided_exercises = args.avoided_exercises;
+    if (args.preferred_intensity) updates.preferred_intensity = args.preferred_intensity;
+    if (args.preferred_duration) updates.preferred_duration = args.preferred_duration;
+    if (args.injuries) updates.injuries = args.injuries;
+    if (args.preferred_workout_types) updates.preferred_workout_types = args.preferred_workout_types;
+
+    await context.update(updates);
+    
+    return { 
+      success: true, 
+      message: 'Preferencias de entrenamiento guardadas',
+      context: updates 
+    };
+  },
+
   get_profile: async (userId) => {
     const profile = await UserProfile.findOne({ where: { user_id: userId } });
-    if (!profile) return { success: false, message: 'Perfil no encontrado' };
+    const context = await UserContext.findOne({ where: { user_id: userId } });
+    
     return {
       success: true,
       profile: {
-        experience: profile.experience_level,
-        goal: profile.goal,
-        available_days: profile.available_days,
-        session_duration: profile.session_duration,
+        experience: profile?.experience_level,
+        goal: profile?.goal,
+        available_days: profile?.available_days,
+        session_duration: profile?.session_duration,
       },
+      training_context: {
+        training_focus: context?.training_focus,
+        preferred_exercises: context?.preferred_exercises,
+        preferred_intensity: context?.preferred_intensity,
+        injuries: context?.injuries,
+      }
     };
   },
 
@@ -205,7 +250,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'update_profile',
-      description: 'Actualiza el perfil del usuario (nivel de experiencia, objetivo, días disponibles, duración de sesión)',
+      description: 'Actualiza el perfil del usuario (nivel de experiencia, objetivo, días disponibles)',
       parameters: {
         type: 'object',
         properties: {
@@ -234,8 +279,54 @@ const tools = [
   {
     type: 'function',
     function: {
+      name: 'update_training_context',
+      description: 'Actualiza las preferencias de entrenamiento del usuario. USA ESTA FUNCIÓN cuando el usuario mencione qué tipo de entrenamiento hace o qué ejercicios le gustan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          training_focus: {
+            type: 'string',
+            enum: ['calisthenics', 'weightlifting', 'crossfit', 'mixed', 'bodybuilding', 'powerlifting'],
+            description: 'Tipo principal de entrenamiento: calisthenics (peso corporal), weightlifting (halterofilia/olímpico), crossfit, mixed (mezcla de pesas y calistenia), bodybuilding, powerlifting',
+          },
+          preferred_exercises: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Lista de ejercicios favoritos del usuario',
+          },
+          avoided_exercises: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Ejercicios que el usuario quiere evitar',
+          },
+          preferred_intensity: {
+            type: 'string',
+            enum: ['low', 'moderate', 'high', 'extreme'],
+            description: 'Intensidad preferida',
+          },
+          preferred_duration: {
+            type: 'number',
+            description: 'Duración preferida en minutos',
+          },
+          injuries: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Lesiones o limitaciones del usuario',
+          },
+          preferred_workout_types: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tipos de workout preferidos: strength, hiit, amrap, emom, circuit',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_profile',
-      description: 'Obtiene el perfil actual del usuario',
+      description: 'Obtiene el perfil y preferencias de entrenamiento del usuario',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -251,26 +342,25 @@ const tools = [
     type: 'function',
     function: {
       name: 'generate_routine',
-      description: 'Genera una nueva rutina de ejercicios personalizada para el usuario',
+      description: 'Genera una nueva rutina de ejercicios personalizada',
       parameters: {
         type: 'object',
         properties: {
           difficulty: {
             type: 'string',
             enum: ['beginner', 'intermediate', 'advanced'],
-            description: 'Nivel de dificultad de la rutina',
           },
           goal: {
             type: 'string',
-            description: 'Objetivo específico (fuerza, hipertrofia, resistencia)',
+            description: 'Objetivo específico',
           },
           workout_type: {
             type: 'string',
-            description: 'Tipo de entrenamiento (calistenia, halterofilia, crossfit, pesas, mixto)',
+            description: 'Tipo de entrenamiento (usa el training_focus del usuario si no se especifica)',
           },
           custom_request: {
             type: 'string',
-            description: 'Petición específica del usuario sobre la rutina',
+            description: 'Petición específica del usuario',
           },
         },
       },
@@ -286,13 +376,23 @@ router.post('/', auth, async (req, res) => {
       return res.status(500).json({ message: 'API key no configurada' });
     }
 
-    // Agregar system prompt al inicio
+    // Obtener contexto del usuario para incluirlo en el prompt
+    const context = await UserContext.findOne({ where: { user_id: req.user.id } });
+    
+    const contextInfo = context ? `
+CONTEXTO DEL USUARIO (GUARDADO):
+- Tipo de entrenamiento: ${context.training_focus || 'no especificado'}
+- Ejercicios favoritos: ${JSON.stringify(context.preferred_exercises || [])}
+- Intensidad preferida: ${context.preferred_intensity || 'moderate'}
+- Lesiones: ${JSON.stringify(context.injuries || [])}
+
+USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
+
     const messagesWithSystem = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT + contextInfo },
       ...messages,
     ];
 
-    // Primera llamada a Grok
     const response = await fetch(GROK_API_URL, {
       method: 'POST',
       headers: {
@@ -315,7 +415,6 @@ router.post('/', auth, async (req, res) => {
       return res.status(500).json({ error: data });
     }
 
-    // Si Grok quiere usar una función
     if (data.choices[0]?.message?.tool_calls) {
       const toolCalls = data.choices[0].message.tool_calls;
       const toolResults = [];
@@ -330,7 +429,6 @@ router.post('/', auth, async (req, res) => {
         if (availableFunctions[functionName]) {
           const result = await availableFunctions[functionName](req.user.id, args);
           
-          // Guardar el routine_id si se generó una rutina
           if (functionName === 'generate_routine' && result.routine_id) {
             generatedRoutineId = result.routine_id;
           }
@@ -343,7 +441,6 @@ router.post('/', auth, async (req, res) => {
         }
       }
 
-      // Segunda llamada con resultados de las funciones
       const followUpMessages = [
         ...messagesWithSystem,
         data.choices[0].message,
@@ -365,11 +462,9 @@ router.post('/', auth, async (req, res) => {
 
       data = await followUpResponse.json();
       
-      // Si se generó una rutina, asegurarse de que el botón esté en la respuesta
       if (generatedRoutineId) {
         let content = data.choices?.[0]?.message?.content || '';
         
-        // Si Grok no incluyó el patrón, agregarlo
         if (!content.includes('[ROUTINE_BUTTON:')) {
           content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
           data.choices[0].message.content = content;
