@@ -126,7 +126,7 @@ Responde SOLO con el JSON de la rutina, SIN markdown, SIN texto adicional, SIN c
         'Authorization': `Bearer ${XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-4-fast-reasoning',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -293,7 +293,7 @@ Reemplaza ID_DE_LA_RUTINA con el ID real que devuelve la función.`;
         'Authorization': `Bearer ${XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-4-fast-reasoning',
         messages: messages,
         functions: AVAILABLE_FUNCTIONS,
         function_call: 'auto',
@@ -362,7 +362,7 @@ Reemplaza ID_DE_LA_RUTINA con el ID real que devuelve la función.`;
           'Authorization': `Bearer ${XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: 'grok-beta',
+          model: 'grok-4-fast-reasoning',
           messages: [
             ...messages,
             choice.message,
