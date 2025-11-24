@@ -159,7 +159,7 @@ JSON OBLIGATORIO (sin markdown):
       'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'grok-4-fast-reasoning',
+      model: 'grok-4-fast',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
@@ -285,7 +285,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
+        model: 'grok-4-fast',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           ...messages
