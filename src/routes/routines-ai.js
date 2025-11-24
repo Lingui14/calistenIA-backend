@@ -143,7 +143,7 @@ router.post('/generate-ai', auth, async (req, res) => {
         'Authorization': `Bearer ${REACT_APP_REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
+        model: 'grok-3-fast',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
