@@ -19,7 +19,19 @@ CUANDO GENERES RUTINAS:
 - Adapta la dificultad al nivel del usuario
 - Si mencionan halterofilia/pesas: incluye ejercicios con barra y mancuernas
 - Si mencionan calistenia: usa peso corporal
-- Si no especifican: mezcla ambos`;
+- Si no especifican: mezcla ambos
+
+IMPORTANTE - DESPUÉS DE GENERAR UNA RUTINA:
+Cuando la función generate_routine se ejecute exitosamente y recibas el resultado con routine_id, SIEMPRE debes responder incluyendo este patrón exacto al final:
+
+[ROUTINE_BUTTON:ID]
+
+Donde ID es el routine_id que recibiste del resultado de la función. Esto es OBLIGATORIO para que el usuario pueda ver el botón de ir a la rutina en la app.
+
+Ejemplo de respuesta después de generar rutina:
+"¡Listo! He creado tu rutina de halterofilia con 5 ejercicios enfocados en fuerza explosiva. Incluye Clean and Jerk, Snatch, Front Squat y más.
+
+[ROUTINE_BUTTON:123]"`;
 
 // Función para generar rutina con IA
 async function generateRoutineWithAI(userId, args) {
@@ -62,7 +74,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
         'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
+        model: 'grok-3-fast',
         messages: [
           { role: 'system', content: 'Eres un experto en fitness. Genera rutinas con ejercicios claros y descripciones detalladas. Responde SOLO con JSON válido.' },
           { role: 'user', content: routinePrompt }
@@ -288,7 +300,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model || 'grok-4-fast-reasoning',
+        model: model || 'grok-3-fast',
         messages: messagesWithSystem,
         max_tokens: max_tokens || 1000,
         tools: tools,
@@ -307,6 +319,7 @@ router.post('/', auth, async (req, res) => {
     if (data.choices[0]?.message?.tool_calls) {
       const toolCalls = data.choices[0].message.tool_calls;
       const toolResults = [];
+      let generatedRoutineId = null;
 
       for (const toolCall of toolCalls) {
         const functionName = toolCall.function.name;
@@ -316,6 +329,12 @@ router.post('/', auth, async (req, res) => {
 
         if (availableFunctions[functionName]) {
           const result = await availableFunctions[functionName](req.user.id, args);
+          
+          // Guardar el routine_id si se generó una rutina
+          if (functionName === 'generate_routine' && result.routine_id) {
+            generatedRoutineId = result.routine_id;
+          }
+          
           toolResults.push({
             tool_call_id: toolCall.id,
             role: 'tool',
@@ -338,7 +357,7 @@ router.post('/', auth, async (req, res) => {
           'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: model || 'grok-4-fast-reasoning',
+          model: model || 'grok-3-fast',
           messages: followUpMessages,
           max_tokens: max_tokens || 1000,
         }),
@@ -346,17 +365,19 @@ router.post('/', auth, async (req, res) => {
 
       data = await followUpResponse.json();
       
-      // Agregar el ID de rutina a la respuesta si se generó una
-      const routineResult = toolResults.find(r => {
-        const content = JSON.parse(r.content);
-        return content.routine_id;
-      });
-      
-      if (routineResult) {
-        const content = JSON.parse(routineResult.content);
+      // Si se generó una rutina, asegurarse de que el botón esté en la respuesta
+      if (generatedRoutineId) {
+        let content = data.choices?.[0]?.message?.content || '';
+        
+        // Si Grok no incluyó el patrón, agregarlo
+        if (!content.includes('[ROUTINE_BUTTON:')) {
+          content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
+          data.choices[0].message.content = content;
+        }
+        
         return res.json({
           ...data,
-          routine_id: content.routine_id,
+          routine_id: generatedRoutineId,
         });
       }
     }
