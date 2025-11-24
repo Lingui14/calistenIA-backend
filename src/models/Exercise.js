@@ -1,4 +1,4 @@
-// src/models/Exercise.js (ACTUALIZADO)
+// src/models/Exercise.js
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
 
@@ -18,13 +18,18 @@ const Exercise = sequelize.define('Exercise', {
   },
   description: DataTypes.TEXT,
   
-  // Tipo de ejercicio
   exercise_type: {
     type: DataTypes.STRING,
-    defaultValue: 'standard', // standard, amrap, hiit, emom, rest
+    defaultValue: 'standard',
   },
   
-  // Para ejercicios estándar
+  // NUEVO: Ejercicios del circuito para HIIT/AMRAP/EMOM
+  circuit_exercises: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+  },
+  
   sets: {
     type: DataTypes.INTEGER,
     defaultValue: 3,
@@ -35,39 +40,35 @@ const Exercise = sequelize.define('Exercise', {
   },
   rest_time: {
     type: DataTypes.INTEGER,
-    defaultValue: 60, // segundos
+    defaultValue: 60,
   },
   
-  // Para AMRAP
   amrap_duration: {
     type: DataTypes.INTEGER,
-    defaultValue: null, // segundos totales del AMRAP
+    defaultValue: null,
   },
   
-  // Para HIIT/Tabata
   hiit_work_time: {
     type: DataTypes.INTEGER,
-    defaultValue: null, // segundos de trabajo
+    defaultValue: null,
   },
   hiit_rest_time: {
     type: DataTypes.INTEGER,
-    defaultValue: null, // segundos de descanso
+    defaultValue: null,
   },
   hiit_rounds: {
     type: DataTypes.INTEGER,
-    defaultValue: null, // número de rondas
+    defaultValue: null,
   },
   
-  // Para EMOM
   emom_duration: {
     type: DataTypes.INTEGER,
-    defaultValue: null, // minutos totales
+    defaultValue: null,
   },
   
-  // Registro inteligente
   target_metric: {
     type: DataTypes.STRING,
-    defaultValue: 'reps', // reps, time, distance, rounds
+    defaultValue: 'reps',
   },
   
   order_index: {
@@ -75,7 +76,6 @@ const Exercise = sequelize.define('Exercise', {
     defaultValue: 0,
   },
   
-  // Notas/instrucciones
   notes: DataTypes.TEXT,
   
 }, {

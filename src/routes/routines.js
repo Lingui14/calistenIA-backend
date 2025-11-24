@@ -1,10 +1,39 @@
-// src/routes/routines.js (COMPLETO Y CORREGIDO)
+// src/routes/routines.js (COMPLETO Y CORREGIDO CON CIRCUIT_EXERCISES)
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { Routine, Exercise, UserProfile } = require('../models');
 
 const XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
+
+/**
+ * Genera ejercicios de circuito por defecto si la IA falla
+ */
+function getDefaultCircuitExercises(exerciseType) {
+  const defaults = {
+    hiit: [
+      { name: "Burpees", reps: null, duration: 40, description: "Burpees completos", tips: "Explosividad" },
+      { name: "Mountain Climbers", reps: null, duration: 40, description: "Escaladores", tips: "Velocidad" },
+      { name: "Jump Squats", reps: null, duration: 40, description: "Saltos", tips: "Aterriza suave" },
+      { name: "Push-ups", reps: null, duration: 40, description: "Flexiones", tips: "Rango completo" },
+      { name: "High Knees", reps: null, duration: 40, description: "Rodillas altas", tips: "Máxima velocidad" },
+      { name: "Plank Jacks", reps: null, duration: 40, description: "Jacks en plancha", tips: "Core estable" }
+    ],
+    amrap: [
+      { name: "Pull-ups", reps: 5, duration: null, description: "Dominadas", tips: "Rango completo" },
+      { name: "Push-ups", reps: 10, duration: null, description: "Flexiones", tips: "Pecho al suelo" },
+      { name: "Air Squats", reps: 15, duration: null, description: "Sentadillas", tips: "Profundidad" },
+      { name: "Sit-ups", reps: 20, duration: null, description: "Abdominales", tips: "Explosivos" }
+    ],
+    emom: [
+      { name: "Burpees", reps: 12, duration: null, description: "Burpees", tips: "Termina rápido" },
+      { name: "Push-ups", reps: 15, duration: null, description: "Flexiones", tips: "Sin pausa" },
+      { name: "Air Squats", reps: 20, duration: null, description: "Sentadillas", tips: "Constante" },
+      { name: "Lunges", reps: 16, duration: null, description: "Zancadas", tips: "8 por pierna" }
+    ]
+  };
+  return defaults[exerciseType] || defaults.amrap;
+}
 
 /**
  * POST /api/routines/generate-ai
@@ -14,34 +43,47 @@ router.post('/generate-ai', auth, async (req, res) => {
   try {
     const { customPrompt, workoutType, duration, intensity } = req.body;
 
-    // Obtener perfil del usuario
     const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
 
-    // Construir prompt para Grok
     const systemPrompt = `Eres un experto en calistenia de alto nivel estilo Navy SEAL.
 
 PERFIL USUARIO:
 - Nivel: ${profile?.experience_level || 'intermediate'}
 - Equipo: ${JSON.stringify(profile?.available_equipment || ['ninguno'])}
 
-REGLAS OBLIGATORIAS:
-1. SIEMPRE incluye 70% ejercicios HIIT o AMRAP
-2. Nombres épicos e inspiradores
-3. Para HIIT: work 40s, rest 20s, rounds 8-12
-4. Para AMRAP: duración 1200-2400 segundos (20-40 min)
-5. Para EMOM: duración total en segundos (600-1800)
-6. Ejercicios de calistenia: burpees, pull-ups, push-ups, squats, etc.
-7. NUNCA uses ejercicios con pesas o máquinas
+══════════════════════════════════════════════════════════════════════════════
+REGLAS CRÍTICAS PARA EJERCICIOS HIIT/AMRAP/EMOM
+══════════════════════════════════════════════════════════════════════════════
 
-RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
+CADA ejercicio tipo HIIT, AMRAP o EMOM DEBE incluir el campo "circuit_exercises" con múltiples ejercicios:
+
+PARA HIIT (5-8 ejercicios):
+- Cada ronda de trabajo se hace UN ejercicio, rotando en orden
+- El campo "circuit_exercises" contiene los ejercicios a rotar
+- hiit_work_time: 40, hiit_rest_time: 20, hiit_rounds: 8-12
+
+PARA AMRAP (4-6 ejercicios):
+- El usuario hace todos los ejercicios en orden y cuenta rondas
+- El campo "circuit_exercises" contiene los ejercicios con sus reps
+- amrap_duration: 1200-2400 segundos (20-40 min)
+
+PARA EMOM (3-5 ejercicios):
+- Cada minuto corresponde a un ejercicio diferente
+- El campo "circuit_exercises" contiene los ejercicios con sus reps
+- emom_duration: 600-1800 segundos (10-30 min)
+
+══════════════════════════════════════════════════════════════════════════════
+FORMATO JSON OBLIGATORIO (sin markdown, sin texto adicional)
+══════════════════════════════════════════════════════════════════════════════
+
 {
   "name": "Nombre épico de la rutina",
   "description": "Descripción motivadora",
   "difficulty_level": "advanced",
   "exercises": [
     {
-      "name": "Nombre del ejercicio",
-      "description": "Instrucciones",
+      "name": "HIIT Inferno: Warrior Circuit",
+      "description": "Circuito HIIT de 6 ejercicios. 40s trabajo / 20s descanso. Rota entre ejercicios cada ronda.",
       "exercise_type": "hiit",
       "sets": null,
       "reps": null,
@@ -51,10 +93,19 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       "hiit_rest_time": 20,
       "hiit_rounds": 10,
       "emom_duration": null,
-      "notes": "Tips"
+      "circuit_exercises": [
+        { "name": "Burpees", "reps": null, "duration": 40, "description": "Explosión completa", "tips": "Pecho al suelo" },
+        { "name": "Mountain Climbers", "reps": null, "duration": 40, "description": "Velocidad máxima", "tips": "Core apretado" },
+        { "name": "Jump Squats", "reps": null, "duration": 40, "description": "Saltos explosivos", "tips": "Aterriza suave" },
+        { "name": "Push-ups", "reps": null, "duration": 40, "description": "Flexiones estrictas", "tips": "Codos a 45°" },
+        { "name": "High Knees", "reps": null, "duration": 40, "description": "Rodillas altas", "tips": "Máxima velocidad" },
+        { "name": "Plank Jacks", "reps": null, "duration": 40, "description": "Jacks en plancha", "tips": "Caderas estables" }
+      ],
+      "notes": "Mantén intensidad máxima. Rota ejercicios cada ronda."
     },
     {
-      "name": "Otro ejercicio",
+      "name": "AMRAP Challenge: Death Circuit",
+      "description": "20 minutos. Completa tantas rondas como puedas.",
       "exercise_type": "amrap",
       "sets": null,
       "reps": null,
@@ -64,19 +115,61 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       "hiit_rest_time": null,
       "hiit_rounds": null,
       "emom_duration": null,
-      "notes": ""
+      "circuit_exercises": [
+        { "name": "Pull-ups", "reps": 5, "duration": null, "description": "Dominadas estrictas", "tips": "Rango completo" },
+        { "name": "Push-ups", "reps": 10, "duration": null, "description": "Flexiones perfectas", "tips": "Pecho al suelo" },
+        { "name": "Air Squats", "reps": 15, "duration": null, "description": "Sentadillas profundas", "tips": "Cadera bajo rodillas" },
+        { "name": "Sit-ups", "reps": 20, "duration": null, "description": "Abdominales explosivos", "tips": "Toca los pies" }
+      ],
+      "notes": "1 ronda = todos los ejercicios. Objetivo: 5+ rondas."
+    },
+    {
+      "name": "EMOM Destroyer",
+      "description": "15 minutos. Cada minuto, un ejercicio diferente.",
+      "exercise_type": "emom",
+      "sets": null,
+      "reps": null,
+      "rest_time": null,
+      "amrap_duration": null,
+      "hiit_work_time": null,
+      "hiit_rest_time": null,
+      "hiit_rounds": null,
+      "emom_duration": 900,
+      "circuit_exercises": [
+        { "name": "Burpees", "reps": 12, "duration": null, "description": "Burpees completos", "tips": "Termina rápido" },
+        { "name": "Push-ups", "reps": 15, "duration": null, "description": "Flexiones estrictas", "tips": "Sin pausa" },
+        { "name": "Air Squats", "reps": 20, "duration": null, "description": "Sentadillas", "tips": "Profundidad total" }
+      ],
+      "notes": "Minuto 1: Burpees, Minuto 2: Push-ups, Minuto 3: Squats, repite."
     }
   ]
-}`;
+}
+
+EJERCICIOS DISPONIBLES:
+- EMPUJE: Push-ups, Diamond Push-ups, Pike Push-ups, Dips, Clap Push-ups, Archer Push-ups
+- TRACCIÓN: Pull-ups, Chin-ups, Australian Rows, Negative Pull-ups, Commando Pull-ups
+- PIERNAS: Squats, Jump Squats, Lunges, Jump Lunges, Box Jumps, Wall Sit, Pistol Squats
+- CORE: Plank, V-ups, Leg Raises, Mountain Climbers, Bicycle Crunches, Hollow Hold
+- EXPLOSIVOS: Burpees, High Knees, Tuck Jumps, Star Jumps, Jumping Jacks, Skater Jumps
+
+REGLAS FINALES:
+1. SIEMPRE incluye "circuit_exercises" con 4-8 ejercicios para HIIT/AMRAP/EMOM
+2. Nombres épicos e inspiradores
+3. NUNCA uses ejercicios con pesas o máquinas
+4. Responde SOLO con JSON válido`;
 
     let userPrompt = customPrompt || 'Genera una rutina HIIT extrema de calistenia';
     if (workoutType) userPrompt += `. Tipo: ${workoutType}`;
     if (duration) userPrompt += `. Duración: ${duration} minutos`;
     if (intensity) userPrompt += `. Intensidad: ${intensity}`;
+    
+    userPrompt += `
+
+CRÍTICO: Cada ejercicio HIIT/AMRAP/EMOM DEBE tener "circuit_exercises" con 4-8 ejercicios diferentes.
+Responde SOLO con JSON válido, SIN markdown, SIN texto adicional.`;
 
     console.log('🤖 Llamando a Grok...');
 
-    // Llamar a Grok
     const response = await fetch(XAI_API_URL, {
       method: 'POST',
       headers: {
@@ -84,13 +177,13 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
         'Authorization': `Bearer ${XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
+        model: 'grok-3-fast',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: 2500,
-        temperature: 0.8
+        max_tokens: 4000,
+        temperature: 0.7
       })
     });
 
@@ -105,7 +198,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
 
     console.log('📝 Respuesta de Grok:', aiResponse);
 
-    // Limpiar y parsear JSON
     let routineData;
     try {
       const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
@@ -115,9 +207,21 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       throw new Error('La IA generó una respuesta inválida');
     }
 
+    // Validar y añadir circuit_exercises por defecto si falta
+    if (routineData.exercises) {
+      routineData.exercises = routineData.exercises.map(ex => {
+        if (['hiit', 'amrap', 'emom'].includes(ex.exercise_type)) {
+          if (!ex.circuit_exercises || !Array.isArray(ex.circuit_exercises) || ex.circuit_exercises.length < 3) {
+            console.warn(`⚠️ Ejercicio ${ex.name} sin circuit_exercises válido, generando defaults`);
+            ex.circuit_exercises = getDefaultCircuitExercises(ex.exercise_type);
+          }
+        }
+        return ex;
+      });
+    }
+
     console.log('✅ Rutina parseada:', routineData);
 
-    // Crear rutina en BD
     const routine = await Routine.create({
       user_id: req.user.id,
       name: routineData.name,
@@ -127,7 +231,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
 
     console.log('💾 Rutina creada en BD:', routine.id);
 
-    // Crear ejercicios
     if (routineData.exercises?.length > 0) {
       const exercisesData = routineData.exercises.map((ex, index) => ({
         routine_id: routine.id,
@@ -142,6 +245,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
         hiit_rest_time: ex.hiit_rest_time,
         hiit_rounds: ex.hiit_rounds,
         emom_duration: ex.emom_duration,
+        circuit_exercises: ex.circuit_exercises || null, // ← CAMPO NUEVO
         notes: ex.notes || '',
         order_index: index + 1,
       }));
@@ -150,7 +254,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
       console.log('✅ Ejercicios creados:', exercisesData.length);
     }
 
-    // Devolver rutina completa
     const fullRoutine = await Routine.findByPk(routine.id, {
       include: [{ model: Exercise, as: 'Exercises' }],
     });
@@ -171,7 +274,6 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
 
 /**
  * GET /api/routines/ai-suggestions
- * Sugerencias rápidas
  */
 router.get('/ai-suggestions', auth, async (req, res) => {
   try {
@@ -181,7 +283,6 @@ router.get('/ai-suggestions', auth, async (req, res) => {
       { type: 'fullbody', label: 'Full Body', description: 'Cuerpo completo' },
       { type: 'push', label: 'Push Day', description: 'Empuje intenso' },
     ];
-
     res.json({ suggestions });
   } catch (err) {
     res.status(500).json({ message: 'Error obteniendo sugerencias' });
@@ -190,7 +291,6 @@ router.get('/ai-suggestions', auth, async (req, res) => {
 
 /**
  * GET /api/routines/active
- * Obtiene la rutina activa del día
  */
 router.get('/active', auth, async (req, res) => {
   try {
@@ -199,11 +299,7 @@ router.get('/active', auth, async (req, res) => {
       order: [['createdAt', 'DESC']],
       include: [{ model: Exercise, as: 'Exercises' }],
     });
-
-    if (!routine) {
-      return res.json(null);
-    }
-
+    if (!routine) return res.json(null);
     res.json(routine);
   } catch (err) {
     console.error('Error obteniendo rutina activa:', err);
@@ -213,7 +309,6 @@ router.get('/active', auth, async (req, res) => {
 
 /**
  * POST /api/routines/generate
- * Genera una rutina básica sin IA
  */
 router.post('/generate', auth, async (req, res) => {
   try {
@@ -248,7 +343,6 @@ router.post('/generate', auth, async (req, res) => {
 
 /**
  * GET /api/routines
- * Obtiene todas las rutinas del usuario
  */
 router.get('/', auth, async (req, res) => {
   try {
@@ -257,7 +351,6 @@ router.get('/', auth, async (req, res) => {
       order: [['createdAt', 'DESC']],
       include: [{ model: Exercise, as: 'Exercises' }],
     });
-
     res.json(routines);
   } catch (err) {
     console.error('Error obteniendo rutinas:', err);
@@ -267,22 +360,14 @@ router.get('/', auth, async (req, res) => {
 
 /**
  * GET /api/routines/:id
- * Obtiene una rutina específica por ID
  */
 router.get('/:id', auth, async (req, res) => {
   try {
     const routine = await Routine.findOne({
-      where: { 
-        id: req.params.id, 
-        user_id: req.user.id 
-      },
+      where: { id: req.params.id, user_id: req.user.id },
       include: [{ model: Exercise, as: 'Exercises' }],
     });
-
-    if (!routine) {
-      return res.status(404).json({ message: 'Rutina no encontrada' });
-    }
-
+    if (!routine) return res.status(404).json({ message: 'Rutina no encontrada' });
     res.json(routine);
   } catch (err) {
     console.error('Error obteniendo rutina:', err);
@@ -292,7 +377,6 @@ router.get('/:id', auth, async (req, res) => {
 
 /**
  * POST /api/routines
- * Crea una rutina personalizada
  */
 router.post('/', auth, async (req, res) => {
   try {
@@ -319,6 +403,7 @@ router.post('/', auth, async (req, res) => {
         hiit_rest_time: ex.hiit_rest_time,
         hiit_rounds: ex.hiit_rounds,
         emom_duration: ex.emom_duration,
+        circuit_exercises: ex.circuit_exercises || null,
         notes: ex.notes || '',
         order_index: index + 1,
       }));
@@ -339,21 +424,13 @@ router.post('/', auth, async (req, res) => {
 
 /**
  * DELETE /api/routines/:id
- * Elimina una rutina
  */
 router.delete('/:id', auth, async (req, res) => {
   try {
     const routine = await Routine.findOne({
-      where: { 
-        id: req.params.id, 
-        user_id: req.user.id 
-      }
+      where: { id: req.params.id, user_id: req.user.id }
     });
-
-    if (!routine) {
-      return res.status(404).json({ message: 'Rutina no encontrada' });
-    }
-
+    if (!routine) return res.status(404).json({ message: 'Rutina no encontrada' });
     await routine.destroy();
     res.json({ message: 'Rutina eliminada' });
   } catch (err) {
