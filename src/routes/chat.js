@@ -1,204 +1,46 @@
-// src/routes/chat.js (CORREGIDO)
+// src/routes/chat.js (COMPLETO Y CORREGIDO)
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
-const { UserProfile, Routine, Exercise, TrainingSession } = require('../models');
+const { UserProfile, Routine, Exercise } = require('../models');
 
-const XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
+const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 
-/**
- * Calcula duración estimada de una rutina
- */
-function calculateRoutineDuration(exercises) {
-  let totalSeconds = 0;
-  exercises.forEach(ex => {
-    if (ex.exercise_type === 'hiit') {
-      totalSeconds += ((ex.hiit_work_time || 40) + (ex.hiit_rest_time || 20)) * (ex.hiit_rounds || 8);
-    } else if (ex.exercise_type === 'amrap') {
-      totalSeconds += ex.amrap_duration || 1200;
-    } else if (ex.exercise_type === 'emom') {
-      totalSeconds += ex.emom_duration || 600;
-    } else if (ex.exercise_type === 'standard') {
-      totalSeconds += ((ex.sets || 3) * 45) + ((ex.sets || 3) * (ex.rest_time || 60));
-    } else if (ex.exercise_type === 'rest') {
-      totalSeconds += ex.rest_time || 120;
-    }
-  });
-  return Math.ceil(totalSeconds / 60);
-}
+const SYSTEM_PROMPT = `Eres CalistenIA, un coach militar de élite especializado en calistenia de alto rendimiento estilo Navy SEAL.
 
-/**
- * Genera ejercicios de circuito por defecto
- */
-function getDefaultCircuitExercises(muscleGroup) {
-  const exercises = {
-    push: [
-      { name: "Push-ups", reps: 15, description: "Flexiones estrictas", tips: "Codos a 45°" },
-      { name: "Diamond Push-ups", reps: 12, description: "Diamante", tips: "Manos juntas" },
-      { name: "Pike Push-ups", reps: 10, description: "Pike", tips: "Hombros" },
-      { name: "Archer Push-ups", reps: 8, description: "Arquero", tips: "Alterna" },
-    ],
-    pull: [
-      { name: "Pull-ups", reps: 8, description: "Dominadas", tips: "Rango completo" },
-      { name: "Chin-ups", reps: 8, description: "Supinas", tips: "Bíceps" },
-      { name: "Australian Rows", reps: 12, description: "Remo invertido", tips: "Pecho a barra" },
-      { name: "Negative Pull-ups", reps: 5, description: "Negativas", tips: "5 seg bajando" },
-    ],
-    legs: [
-      { name: "Jump Squats", reps: 15, description: "Saltos", tips: "Explosividad" },
-      { name: "Lunges", reps: 20, description: "Zancadas", tips: "10 por pierna" },
-      { name: "Bulgarian Split Squats", reps: 12, description: "Búlgara", tips: "6 por pierna" },
-      { name: "Box Jumps", reps: 10, description: "Saltos al cajón", tips: "Aterriza suave" },
-    ],
-    core: [
-      { name: "V-ups", reps: 15, description: "Abdominales V", tips: "Toca los pies" },
-      { name: "Leg Raises", reps: 12, description: "Elevación piernas", tips: "Controlado" },
-      { name: "Plank", reps: 60, description: "Plancha", tips: "60 segundos" },
-      { name: "Mountain Climbers", reps: 30, description: "Escaladores", tips: "Velocidad" },
-    ],
-    fullbody: [
-      { name: "Burpees", reps: null, duration: 40, description: "Burpees", tips: "Explosividad" },
-      { name: "Mountain Climbers", reps: null, duration: 40, description: "Escaladores", tips: "Velocidad" },
-      { name: "Jump Squats", reps: null, duration: 40, description: "Saltos", tips: "Suave" },
-      { name: "Push-ups", reps: null, duration: 40, description: "Flexiones", tips: "Rango" },
-      { name: "High Knees", reps: null, duration: 40, description: "Rodillas", tips: "Velocidad" },
-    ],
-  };
-  return exercises[muscleGroup] || exercises.fullbody;
-}
+PERSONALIDAD:
+- Eres motivador, exigente pero justo
+- Usas lenguaje directo y profesional
+- Enfocado en resultados y superación personal
+- Inspirado en entrenamientos militares de élite
 
-/**
- * Genera rutina con IA
- */
-async function generateRoutineWithAI(userId, params) {
-  const profile = await UserProfile.findOne({ where: { user_id: userId } });
-  const { muscleGroup = 'fullbody', duration = 45, intensity = 'high', customPrompt } = params;
+CAPACIDADES - USA LAS FUNCIONES cuando corresponda:
+- Cuando el usuario pida generar/crear una rutina → SIEMPRE usa la función generate_routine
+- Cuando pregunten por sus rutinas → usa get_routines
+- Cuando quieran ver su perfil → usa get_profile
 
-  const systemPrompt = `Genera una rutina de CALISTENIA variada.
+ESTILO DE RUTINAS:
+- SIEMPRE prioriza HIIT, AMRAP, Tabata, y circuitos de alta intensidad
+- Inspiración: Navy SEAL Hell Week, CrossFit Hero WODs, entrenamiento militar
+- Enfoque: Explosividad, resistencia mental, capacidad funcional
+- Incluye ejercicios compuestos y de cuerpo completo
+- Nombres motivadores e intensos para las rutinas
 
-PERFIL: Nivel ${profile?.experience_level || 'intermediate'}
-
-REGLAS:
-1. Incluye 4-5 bloques DIFERENTES: combina HIIT + AMRAP + STANDARD + REST
-2. Enfócate en grupo muscular: ${muscleGroup}
-3. Duración aproximada: ${duration} minutos
-4. Cada bloque HIIT/AMRAP/EMOM DEBE tener "circuit_exercises" con 4-6 ejercicios
-
-EJERCICIOS POR GRUPO:
-- PUSH: Push-ups, Diamond Push-ups, Pike Push-ups, Dips, Archer Push-ups
-- PULL: Pull-ups, Chin-ups, Australian Rows, Negative Pull-ups
-- LEGS: Squats, Jump Squats, Lunges, Bulgarian Split Squats, Box Jumps
-- CORE: Plank, V-ups, Leg Raises, Hollow Hold, Mountain Climbers
-- FULLBODY: Burpees, Mountain Climbers, Jump Squats, Push-ups, High Knees
-
-JSON OBLIGATORIO (sin markdown):
-{
-  "name": "Nombre Épico",
-  "description": "Descripción motivadora",
-  "difficulty_level": "intermediate",
-  "estimated_duration": ${duration},
-  "muscle_focus": "${muscleGroup}",
-  "exercises": [
-    {"name": "Warm-up", "exercise_type": "standard", "sets": 1, "reps": 10, "rest_time": 0},
-    {"name": "HIIT Block", "exercise_type": "hiit", "hiit_work_time": 40, "hiit_rest_time": 20, "hiit_rounds": 8, "circuit_exercises": [{"name": "...", "reps": null, "duration": 40, "description": "...", "tips": "..."}]},
-    {"name": "AMRAP Block", "exercise_type": "amrap", "amrap_duration": 720, "circuit_exercises": [{"name": "...", "reps": 10, "description": "...", "tips": "..."}]},
-    {"name": "Strength", "exercise_type": "standard", "sets": 3, "reps": 10, "rest_time": 60},
-    {"name": "Recovery", "exercise_type": "rest", "rest_time": 120}
-  ]
-}`;
-
-  const userPrompt = customPrompt || `Genera rutina de ${muscleGroup} de ${duration} min, intensidad ${intensity}`;
-
-  const response = await fetch(XAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${XAI_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: 'grok-4-fast-reasoning',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 4000,
-      temperature: 0.8
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error('Error de API Grok');
-  }
-
-  const data = await response.json();
-  let routineData;
-  
-  try {
-    const cleanJson = data.choices[0]?.message?.content.replace(/```json\n?|\n?```/g, '').trim();
-    routineData = JSON.parse(cleanJson);
-  } catch (e) {
-    throw new Error('Error parseando respuesta de IA');
-  }
-
-  // Validar circuit_exercises
-  routineData.exercises = routineData.exercises.map(ex => {
-    if (['hiit', 'amrap', 'emom'].includes(ex.exercise_type)) {
-      if (!ex.circuit_exercises || ex.circuit_exercises.length < 3) {
-        ex.circuit_exercises = getDefaultCircuitExercises(muscleGroup);
-      }
-    }
-    return ex;
-  });
-
-  const estimatedDuration = routineData.estimated_duration || calculateRoutineDuration(routineData.exercises);
-
-  const routine = await Routine.create({
-    user_id: userId,
-    name: routineData.name,
-    description: routineData.description,
-    difficulty_level: routineData.difficulty_level,
-    estimated_duration: estimatedDuration,
-  });
-
-  if (routineData.exercises?.length > 0) {
-    await Exercise.bulkCreate(routineData.exercises.map((ex, i) => ({
-      routine_id: routine.id,
-      name: ex.name,
-      description: ex.description || '',
-      exercise_type: ex.exercise_type || 'standard',
-      sets: ex.sets,
-      reps: ex.reps,
-      rest_time: ex.rest_time,
-      amrap_duration: ex.amrap_duration,
-      hiit_work_time: ex.hiit_work_time,
-      hiit_rest_time: ex.hiit_rest_time,
-      hiit_rounds: ex.hiit_rounds,
-      emom_duration: ex.emom_duration,
-      circuit_exercises: ex.circuit_exercises || null,
-      notes: ex.notes || '',
-      order_index: i + 1,
-    })));
-  }
-
-  const fullRoutine = await Routine.findByPk(routine.id, {
-    include: [{ model: Exercise, as: 'Exercises' }],
-  });
-
-  return { routine: fullRoutine, estimated_duration: estimatedDuration };
-}
+IMPORTANTE: Cuando generes una rutina con la función, responde así:
+"¡Tu rutina está lista! [ROUTINE_BUTTON:ROUTINE_ID]"`;
 
 // Funciones disponibles para el chat
 const AVAILABLE_FUNCTIONS = [
   {
     name: 'generate_routine',
-    description: 'Genera una rutina de calistenia variada con múltiples bloques',
+    description: 'Genera una rutina de entrenamiento estilo Navy SEAL/militar de alta intensidad',
     parameters: {
       type: 'object',
       properties: {
-        muscleGroup: { 
+        focus: { 
           type: 'string', 
-          enum: ['push', 'pull', 'legs', 'core', 'fullbody'],
-          description: 'Grupo muscular a trabajar'
+          enum: ['hiit', 'amrap', 'strength', 'endurance', 'fullbody', 'push', 'pull', 'legs'],
+          description: 'Tipo de entrenamiento - SIEMPRE prioriza hiit o amrap'
         },
         duration: { 
           type: 'integer', 
@@ -207,10 +49,11 @@ const AVAILABLE_FUNCTIONS = [
         },
         intensity: { 
           type: 'string', 
-          enum: ['moderate', 'high', 'extreme'],
-          default: 'high'
+          enum: ['high', 'extreme'],
+          default: 'extreme',
+          description: 'Nivel de intensidad - SIEMPRE usa extreme o high'
         },
-        customRequest: { 
+        custom_request: { 
           type: 'string', 
           description: 'Petición específica del usuario' 
         }
@@ -222,7 +65,9 @@ const AVAILABLE_FUNCTIONS = [
     description: 'Obtiene las rutinas del usuario',
     parameters: {
       type: 'object',
-      properties: { limit: { type: 'integer', default: 5 } }
+      properties: {
+        limit: { type: 'integer', default: 5 }
+      }
     }
   },
   {
@@ -232,187 +77,267 @@ const AVAILABLE_FUNCTIONS = [
   }
 ];
 
-// src/routes/chat.js - AGREGAR ESTA RUTA AL INICIO (después de AVAILABLE_FUNCTIONS)
+/**
+ * Genera rutina de alto nivel estilo Navy SEAL
+ */
+async function generateEliteRoutine(userId, params) {
+  const profile = await UserProfile.findOne({ where: { user_id: userId } });
+
+  const systemPrompt = `Genera una rutina de CALISTENIA de ÉLITE estilo entrenamiento militar Navy SEAL.
+
+PERFIL: Nivel ${profile?.experience_level || 'intermediate'}, Equipo: ${JSON.stringify(profile?.available_equipment || ['ninguno'])}
+
+REGLAS OBLIGATORIAS:
+1. SIEMPRE incluye al menos 60% de ejercicios tipo HIIT o AMRAP
+2. Enfoque en explosividad, resistencia mental y capacidad funcional
+3. Ejercicios de cuerpo completo y compuestos
+4. Nombres ÉPICOS e inspiradores
+5. Intensidad EXTREMA
+6. Incluye al menos 3-4 ejercicios HIIT/AMRAP por rutina
+7. Tiempos de descanso CORTOS (30-45 segundos máximo)
+
+TIPOS DE EJERCICIOS:
+- HIIT: work 40s, rest 20s, rounds 8-12
+- AMRAP: duración 1200-2400 segundos (20-40 min)
+- Standard: solo para calentamiento/enfriamiento
+
+FORMATO JSON (SIN MARKDOWN):
+{
+  "name": "NOMBRE ÉPICO DE LA RUTINA",
+  "description": "Descripción motivadora estilo militar",
+  "difficulty_level": "advanced",
+  "exercises": [
+    {
+      "name": "Nombre del ejercicio",
+      "description": "Instrucciones precisas",
+      "exercise_type": "hiit|amrap|standard",
+      "sets": 3,
+      "reps": 10,
+      "rest_time": 30,
+      "amrap_duration": 1200,
+      "hiit_work_time": 40,
+      "hiit_rest_time": 20,
+      "hiit_rounds": 8,
+      "notes": "Tips de forma"
+    }
+  ],
+  "spotify_mood": "intense"
+}`;
+
+  const userPrompt = `Genera una rutina EXTREMA de calistenia estilo Navy SEAL.
+Tipo: ${params.focus || 'hiit'}
+Duración: ${params.duration || 45} minutos
+${params.custom_request ? `Petición: ${params.custom_request}` : ''}
+
+RECUERDA: Mínimo 60% HIIT/AMRAP, nombres épicos, intensidad máxima.`;
+
+  const response = await fetch(XAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'grok-3-fast',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      max_tokens: 2500,
+      temperature: 0.8
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('Error generando rutina con Grok');
+  }
+
+  const data = await response.json();
+  const aiResponse = data.choices[0]?.message?.content;
+
+  // Parsear respuesta
+  const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
+  const routineData = JSON.parse(cleanJson);
+
+  // Crear rutina en BD
+  const routine = await Routine.create({
+    user_id: userId,
+    name: routineData.name,
+    description: routineData.description,
+    difficulty_level: routineData.difficulty_level || 'advanced',
+  });
+
+  // Crear ejercicios
+  if (routineData.exercises?.length > 0) {
+    const exercisesData = routineData.exercises.map((ex, index) => ({
+      routine_id: routine.id,
+      name: ex.name,
+      description: ex.description || '',
+      exercise_type: ex.exercise_type || 'standard',
+      sets: ex.sets || 3,
+      reps: ex.reps || 10,
+      rest_time: ex.rest_time || 30,
+      amrap_duration: ex.amrap_duration,
+      hiit_work_time: ex.hiit_work_time,
+      hiit_rest_time: ex.hiit_rest_time,
+      hiit_rounds: ex.hiit_rounds,
+      notes: ex.notes || '',
+      order_index: index + 1,
+    }));
+
+    await Exercise.bulkCreate(exercisesData);
+  }
+
+  return {
+    routine_id: routine.id,
+    routine_name: routine.name,
+    spotify_mood: routineData.spotify_mood || 'intense',
+    exercises_count: routineData.exercises?.length || 0
+  };
+}
+
+/**
+ * Ejecuta funciones
+ */
+async function executeFunction(functionName, args, userId) {
+  switch (functionName) {
+    case 'generate_routine':
+      return await generateEliteRoutine(userId, args);
+
+    case 'get_routines': {
+      const routines = await Routine.findAll({
+        where: { user_id: userId },
+        order: [['createdAt', 'DESC']],
+        limit: args.limit || 5,
+        include: [{ model: Exercise, as: 'Exercises' }]
+      });
+      return { 
+        routines: routines.map(r => ({ 
+          id: r.id, 
+          name: r.name, 
+          exercises: r.Exercises?.length 
+        })) 
+      };
+    }
+
+    case 'get_profile': {
+      const profile = await UserProfile.findOne({ where: { user_id: userId } });
+      return { profile };
+    }
+
+    default:
+      return { error: 'Función no reconocida' };
+  }
+}
 
 /**
  * POST /api/chat
- * Ruta compatible con el frontend original
+ * Chat principal con function calling
  */
 router.post('/', auth, async (req, res) => {
   try {
-    const { messages: inputMessages } = req.body;
-    
-    if (!inputMessages || inputMessages.length === 0) {
-      return res.status(400).json({ message: 'Mensajes requeridos' });
-    }
+    const { messages } = req.body;
 
-    // Extraer el último mensaje del usuario
-    const userMessages = inputMessages.filter(m => m.role === 'user');
-    const lastUserMessage = userMessages[userMessages.length - 1]?.content;
-    
-    if (!lastUserMessage) {
-      return res.status(400).json({ message: 'Mensaje de usuario requerido' });
-    }
-
-    // Obtener historial (todos menos el último)
-    const conversationHistory = inputMessages.slice(0, -1);
-
-    const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
-
-    const systemPrompt = `Eres CalistenIA, un entrenador personal de élite experto en calistenia estilo Navy SEAL.
-
-PERFIL DEL USUARIO:
-${JSON.stringify(profile, null, 2)}
-
-CAPACIDADES:
-1. Generar rutinas épicas de calistenia (usa generate_routine)
-2. Consultar rutinas existentes (usa get_routines)
-3. Ver perfil del usuario (usa get_profile)
-
-IMPORTANTE: Cuando el usuario pida una rutina, SIEMPRE usa la función generate_routine.
-Después de generarla, responde con formato:
-"✅ Rutina generada: [NOMBRE]
-
-[DESCRIPCIÓN BREVE]
-
-[ROUTINE_BUTTON:ID_DE_LA_RUTINA]"`;
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...conversationHistory,
-      { role: 'user', content: lastUserMessage }
-    ];
-
+    // Primera llamada a Grok
     const response = await fetch(XAI_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`,
+        'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
-        messages: messages,
-        functions: AVAILABLE_FUNCTIONS,
-        function_call: 'auto',
-        temperature: 0.7,
-      }),
+        model: 'grok-3-fast',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          ...messages
+        ],
+        tools: AVAILABLE_FUNCTIONS.map(f => ({ type: 'function', function: f })),
+        tool_choice: 'auto',
+        max_tokens: 1000
+      })
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Grok API error: ${response.status} - ${errorText}`);
+      throw new Error('Error con Grok');
     }
 
-    const data = await response.json();
-    const choice = data.choices?.[0];
+    let data = await response.json();
+    let assistantMessage = data.choices[0]?.message;
+    let generatedRoutineId = null;
 
-    if (!choice) {
-      throw new Error('No response from Grok');
-    }
+    // Si hay tool_calls, ejecutarlos
+    if (assistantMessage.tool_calls?.length > 0) {
+      const toolResults = [];
 
-    // Si hay function call
-    if (choice.message?.function_call) {
-      const functionName = choice.message.function_call.name;
-      const functionArgs = JSON.parse(choice.message.function_call.arguments);
+      for (const toolCall of assistantMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments || '{}');
 
-      let functionResult;
-      let generatedRoutineId = null;
-
-      if (functionName === 'generate_routine') {
-        const routineId = await generateEliteRoutine(req.user.id, functionArgs);
-        generatedRoutineId = routineId;
+        const result = await executeFunction(functionName, functionArgs, req.user.id);
         
-        const routine = await Routine.findByPk(routineId, {
-          include: [{ model: Exercise, as: 'Exercises' }]
-        });
+        // Guardar el ID de la rutina si se generó una
+        if (functionName === 'generate_routine' && result.routine_id) {
+          generatedRoutineId = result.routine_id;
+        }
 
-        functionResult = {
-          success: true,
-          routine_id: routineId,
-          routine_name: routine.name,
-          routine_description: routine.description,
-          exercises_count: routine.Exercises?.length || 0
-        };
-      } else if (functionName === 'get_routines') {
-        const routines = await Routine.findAll({
-          where: { user_id: req.user.id },
-          order: [['createdAt', 'DESC']],
-          limit: functionArgs.limit || 5,
-          include: [{ model: Exercise, as: 'Exercises' }]
+        toolResults.push({
+          tool_call_id: toolCall.id,
+          role: 'tool',
+          content: JSON.stringify(result)
         });
-
-        functionResult = {
-          routines: routines.map(r => ({
-            id: r.id,
-            name: r.name,
-            description: r.description,
-            exercises_count: r.Exercises?.length || 0
-          }))
-        };
-      } else if (functionName === 'get_profile') {
-        functionResult = { profile };
       }
 
-      // Segunda llamada con el resultado de la función
-      const secondResponse = await fetch(XAI_API_URL, {
+      // Segunda llamada con resultados
+      const followUpResponse = await fetch(XAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${XAI_API_KEY}`,
+          'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'grok-4-fast-reasoning',
+          model: 'grok-3-fast',
           messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
             ...messages,
-            choice.message,
-            {
-              role: 'function',
-              name: functionName,
-              content: JSON.stringify(functionResult),
-            },
+            assistantMessage,
+            ...toolResults
           ],
-          temperature: 0.7,
-        }),
+          max_tokens: 1000
+        })
       });
 
-      const secondData = await secondResponse.json();
-      let replyContent = secondData.choices?.[0]?.message?.content || 'Rutina generada correctamente';
-
-     if (generatedRoutineId) {
-  replyContent = replyContent.replace(/\[ROUTINE_BUTTON:[^\]]+\]/gi, `[ROUTINE_BUTTON:${generatedRoutineId}]`);
-  if (!replyContent.includes('[ROUTINE_BUTTON:')) {
-    replyContent += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
-  }
-}
-
-      // Devolver en formato compatible con frontend original
-      return res.json({
-        choices: [{
-          message: {
-            content: replyContent
-          }
-        }],
-        function_called: functionName,
-        function_result: functionResult,
-      });
+      data = await followUpResponse.json();
+      assistantMessage = data.choices[0]?.message;
     }
 
-    // Respuesta normal sin function call - formato compatible
+    // CORRECCIÓN: Reemplazar placeholder con ID real
+    let content = assistantMessage.content || '';
+    if (generatedRoutineId) {
+      content = content.replace(/\[ROUTINE_BUTTON:[^\]]*\]/gi, `[ROUTINE_BUTTON:${generatedRoutineId}]`);
+      if (!content.includes('[ROUTINE_BUTTON:')) {
+        content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
+      }
+    }
+
     res.json({
       choices: [{
         message: {
-          content: choice.message?.content || 'Lo siento, no pude generar una respuesta.'
+          role: 'assistant',
+          content: content
         }
       }]
     });
 
-
-    // Respuesta normal sin function call
-    res.json({ reply: choice.message?.content || 'Lo siento, no pude responder.' });
-
   } catch (err) {
-    console.error('Error en /chat/message:', err);
-    res.status(500).json({ message: err.message });
+    console.error('Error en chat:', err);
+    res.status(500).json({ 
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: 'Lo siento, hubo un error. Intenta de nuevo.'
+        }
+      }]
+    });
   }
 });
 
