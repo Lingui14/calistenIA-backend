@@ -292,7 +292,7 @@ router.post('/', auth, async (req, res) => {
         ],
         tools: AVAILABLE_FUNCTIONS.map(f => ({ type: 'function', function: f })),
         tool_choice: 'auto',
-        max_tokens: 1000
+        max_tokens: 1000000
       })
     });
 
