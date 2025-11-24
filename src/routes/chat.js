@@ -74,7 +74,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown ni texto adicional):
         'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-3-fast',
+        model: 'grok-4-fast-reasoning',
         messages: [
           { role: 'system', content: 'Eres un experto en fitness. Genera rutinas con ejercicios claros y descripciones detalladas. Responde SOLO con JSON válido.' },
           { role: 'user', content: routinePrompt }
@@ -300,7 +300,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model || 'grok-3-fast',
+        model: model || 'grok-4-fast-reasoning',
         messages: messagesWithSystem,
         max_tokens: max_tokens || 1000,
         tools: tools,
@@ -357,7 +357,7 @@ router.post('/', auth, async (req, res) => {
           'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: model || 'grok-3-fast',
+          model: model || 'grok-4-fast-reasoning',
           messages: followUpMessages,
           max_tokens: max_tokens || 1000,
         }),
