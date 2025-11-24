@@ -184,7 +184,7 @@ router.post('/', auth, async (req, res) => {
             assistantMessage,
             ...toolResults
           ],
-          max_tokens: 1000
+          max_tokens: 100000
         })
       });
 
