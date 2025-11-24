@@ -164,7 +164,7 @@ JSON OBLIGATORIO (sin markdown):
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 4500,
+      max_tokens: 1000000,
       temperature: 0.8
     })
   });
@@ -338,7 +338,7 @@ router.post('/', auth, async (req, res) => {
             assistantMessage,
             ...toolResults
           ],
-          max_tokens: 1000
+          max_tokens: 10000000
         })
       });
 
