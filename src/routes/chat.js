@@ -378,10 +378,12 @@ Después de generarla, responde con formato:
       const secondData = await secondResponse.json();
       let replyContent = secondData.choices?.[0]?.message?.content || 'Rutina generada correctamente';
 
-      // Si se generó una rutina, asegurar que el botón esté presente
-      if (generatedRoutineId && !replyContent.includes('[ROUTINE_BUTTON:')) {
-        replyContent += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
-      }
+     if (generatedRoutineId) {
+  replyContent = replyContent.replace(/\[ROUTINE_BUTTON:[^\]]+\]/gi, `[ROUTINE_BUTTON:${generatedRoutineId}]`);
+  if (!replyContent.includes('[ROUTINE_BUTTON:')) {
+    replyContent += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
+  }
+}
 
       // Devolver en formato compatible con frontend original
       return res.json({
