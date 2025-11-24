@@ -1,8 +1,8 @@
-// src/routes/chat.js (COMPLETO - USANDO GENERADOR COMPARTIDO)
+// src/routes/chat.js
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { UserProfile, Routine, Exercise } = require('../models');
-const { generateRoutineWithAI } = require('./routineGenerator'); // <-- NUEVO IMPORT
+const { generateRoutineWithAI } = require('./routineGenerator');
 
 const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
@@ -30,7 +30,6 @@ ESTILO DE RUTINAS:
 IMPORTANTE: Cuando generes una rutina con la función, responde así:
 "¡Tu rutina está lista! [ROUTINE_BUTTON:ROUTINE_ID]"`;
 
-// Funciones disponibles para el chat
 const AVAILABLE_FUNCTIONS = [
   {
     name: 'generate_routine',
@@ -78,13 +77,22 @@ const AVAILABLE_FUNCTIONS = [
   }
 ];
 
-/**
- * Ejecuta funciones
- */
 async function executeFunction(functionName, args, userId) {
   switch (functionName) {
-    case 'generate_routine':
-      return await generateRoutineWithAI(userId, args); // <-- USA FUNCIÓN COMPARTIDA
+    case 'generate_routine': {
+      const result = await generateRoutineWithAI(userId, {
+        muscleGroup: args.focus || 'fullbody',
+        duration: args.duration || 45,
+        intensity: args.intensity || 'extreme',
+        customPrompt: args.custom_request
+      });
+      return {
+        routine_id: result.routine.id,
+        routine_name: result.routine.name,
+        exercises_count: result.routine.Exercises?.length || 0,
+        estimated_duration: result.estimated_duration
+      };
+    }
 
     case 'get_routines': {
       const routines = await Routine.findAll({
@@ -112,15 +120,10 @@ async function executeFunction(functionName, args, userId) {
   }
 }
 
-/**
- * POST /api/chat
- * Chat principal con function calling
- */
 router.post('/', auth, async (req, res) => {
   try {
     const { messages } = req.body;
 
-    // Primera llamada a Grok
     const response = await fetch(XAI_API_URL, {
       method: 'POST',
       headers: {
@@ -128,7 +131,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-3-fast',
+        model: 'grok-4-fast-reasoning',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           ...messages
@@ -147,7 +150,6 @@ router.post('/', auth, async (req, res) => {
     let assistantMessage = data.choices[0]?.message;
     let generatedRoutineId = null;
 
-    // Si hay tool_calls, ejecutarlos
     if (assistantMessage.tool_calls?.length > 0) {
       const toolResults = [];
 
@@ -157,7 +159,6 @@ router.post('/', auth, async (req, res) => {
 
         const result = await executeFunction(functionName, functionArgs, req.user.id);
         
-        // Guardar el ID de la rutina si se generó una
         if (functionName === 'generate_routine' && result.routine_id) {
           generatedRoutineId = result.routine_id;
         }
@@ -169,7 +170,6 @@ router.post('/', auth, async (req, res) => {
         });
       }
 
-      // Segunda llamada con resultados
       const followUpResponse = await fetch(XAI_API_URL, {
         method: 'POST',
         headers: {
@@ -177,7 +177,7 @@ router.post('/', auth, async (req, res) => {
           'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'grok-3-fast',
+          model: 'grok-4-fast-reasoning',
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             ...messages,
@@ -192,7 +192,6 @@ router.post('/', auth, async (req, res) => {
       assistantMessage = data.choices[0]?.message;
     }
 
-    // Reemplazar placeholder con ID real
     let content = assistantMessage.content || '';
     if (generatedRoutineId) {
       content = content.replace(/\[ROUTINE_BUTTON:[^\]]*\]/gi, `[ROUTINE_BUTTON:${generatedRoutineId}]`);
