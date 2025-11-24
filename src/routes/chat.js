@@ -1,7 +1,8 @@
-// src/routes/chat.js (COMPLETO Y CORREGIDO)
+// src/routes/chat.js (COMPLETO - USANDO GENERADOR COMPARTIDO)
 const router = require('express').Router();
 const auth = require('../middlewares/auth');
 const { UserProfile, Routine, Exercise } = require('../models');
+const { generateRoutineWithAI } = require('./routineGenerator'); // <-- NUEVO IMPORT
 
 const REACT_APP_XAI_API_KEY = process.env.REACT_APP_XAI_API_KEY;
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
@@ -78,131 +79,12 @@ const AVAILABLE_FUNCTIONS = [
 ];
 
 /**
- * Genera rutina de alto nivel estilo Navy SEAL
- */
-async function generateEliteRoutine(userId, params) {
-  const profile = await UserProfile.findOne({ where: { user_id: userId } });
-
-  const systemPrompt = `Genera una rutina de CALISTENIA de ÉLITE estilo entrenamiento militar Navy SEAL.
-
-PERFIL: Nivel ${profile?.experience_level || 'intermediate'}, Equipo: ${JSON.stringify(profile?.available_equipment || ['ninguno'])}
-
-REGLAS OBLIGATORIAS:
-1. SIEMPRE incluye al menos 60% de ejercicios tipo HIIT o AMRAP
-2. Enfoque en explosividad, resistencia mental y capacidad funcional
-3. Ejercicios de cuerpo completo y compuestos
-4. Nombres ÉPICOS e inspiradores
-5. Intensidad EXTREMA
-6. Incluye al menos 3-4 ejercicios HIIT/AMRAP por rutina
-7. Tiempos de descanso CORTOS (30-45 segundos máximo)
-
-TIPOS DE EJERCICIOS:
-- HIIT: work 40s, rest 20s, rounds 8-12
-- AMRAP: duración 1200-2400 segundos (20-40 min)
-- Standard: solo para calentamiento/enfriamiento
-
-FORMATO JSON (SIN MARKDOWN):
-{
-  "name": "NOMBRE ÉPICO DE LA RUTINA",
-  "description": "Descripción motivadora estilo militar",
-  "difficulty_level": "advanced",
-  "exercises": [
-    {
-      "name": "Nombre del ejercicio",
-      "description": "Instrucciones precisas",
-      "exercise_type": "hiit|amrap|standard",
-      "sets": 3,
-      "reps": 10,
-      "rest_time": 30,
-      "amrap_duration": 1200,
-      "hiit_work_time": 40,
-      "hiit_rest_time": 20,
-      "hiit_rounds": 8,
-      "notes": "Tips de forma"
-    }
-  ],
-  "spotify_mood": "intense"
-}`;
-
-  const userPrompt = `Genera una rutina EXTREMA de calistenia estilo Navy SEAL.
-Tipo: ${params.focus || 'hiit'}
-Duración: ${params.duration || 45} minutos
-${params.custom_request ? `Petición: ${params.custom_request}` : ''}
-
-RECUERDA: Mínimo 60% HIIT/AMRAP, nombres épicos, intensidad máxima.`;
-
-  const response = await fetch(XAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: 'grok-4-fast-reasoning',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 2500,
-      temperature: 0.8
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error('Error generando rutina con Grok');
-  }
-
-  const data = await response.json();
-  const aiResponse = data.choices[0]?.message?.content;
-
-  // Parsear respuesta
-  const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
-  const routineData = JSON.parse(cleanJson);
-
-  // Crear rutina en BD
-  const routine = await Routine.create({
-    user_id: userId,
-    name: routineData.name,
-    description: routineData.description,
-    difficulty_level: routineData.difficulty_level || 'advanced',
-  });
-
-  // Crear ejercicios
-  if (routineData.exercises?.length > 0) {
-    const exercisesData = routineData.exercises.map((ex, index) => ({
-      routine_id: routine.id,
-      name: ex.name,
-      description: ex.description || '',
-      exercise_type: ex.exercise_type || 'standard',
-      sets: ex.sets || 3,
-      reps: ex.reps || 10,
-      rest_time: ex.rest_time || 30,
-      amrap_duration: ex.amrap_duration,
-      hiit_work_time: ex.hiit_work_time,
-      hiit_rest_time: ex.hiit_rest_time,
-      hiit_rounds: ex.hiit_rounds,
-      notes: ex.notes || '',
-      order_index: index + 1,
-    }));
-
-    await Exercise.bulkCreate(exercisesData);
-  }
-
-  return {
-    routine_id: routine.id,
-    routine_name: routine.name,
-    spotify_mood: routineData.spotify_mood || 'intense',
-    exercises_count: routineData.exercises?.length || 0
-  };
-}
-
-/**
  * Ejecuta funciones
  */
 async function executeFunction(functionName, args, userId) {
   switch (functionName) {
     case 'generate_routine':
-      return await generateEliteRoutine(userId, args);
+      return await generateRoutineWithAI(userId, args); // <-- USA FUNCIÓN COMPARTIDA
 
     case 'get_routines': {
       const routines = await Routine.findAll({
@@ -246,7 +128,7 @@ router.post('/', auth, async (req, res) => {
         'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
+        model: 'grok-3-fast',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           ...messages
@@ -295,7 +177,7 @@ router.post('/', auth, async (req, res) => {
           'Authorization': `Bearer ${REACT_APP_XAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'grok-4-fast-reasoning',
+          model: 'grok-3-fast',
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             ...messages,
@@ -310,7 +192,7 @@ router.post('/', auth, async (req, res) => {
       assistantMessage = data.choices[0]?.message;
     }
 
-    // CORRECCIÓN: Reemplazar placeholder con ID real
+    // Reemplazar placeholder con ID real
     let content = assistantMessage.content || '';
     if (generatedRoutineId) {
       content = content.replace(/\[ROUTINE_BUTTON:[^\]]*\]/gi, `[ROUTINE_BUTTON:${generatedRoutineId}]`);
