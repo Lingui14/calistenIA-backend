@@ -232,38 +232,55 @@ const AVAILABLE_FUNCTIONS = [
   }
 ];
 
+// src/routes/chat.js - AGREGAR ESTA RUTA AL INICIO (después de AVAILABLE_FUNCTIONS)
+
 /**
- * POST /api/chat/message
+ * POST /api/chat
+ * Ruta compatible con el frontend original
  */
-router.post('/message', auth, async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
-    const { message, conversationHistory = [] } = req.body;
-    if (!message) return res.status(400).json({ message: 'Mensaje requerido' });
+    const { messages: inputMessages } = req.body;
+    
+    if (!inputMessages || inputMessages.length === 0) {
+      return res.status(400).json({ message: 'Mensajes requeridos' });
+    }
+
+    // Extraer el último mensaje del usuario
+    const userMessages = inputMessages.filter(m => m.role === 'user');
+    const lastUserMessage = userMessages[userMessages.length - 1]?.content;
+    
+    if (!lastUserMessage) {
+      return res.status(400).json({ message: 'Mensaje de usuario requerido' });
+    }
+
+    // Obtener historial (todos menos el último)
+    const conversationHistory = inputMessages.slice(0, -1);
 
     const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
 
-    const systemPrompt = `Eres CalistenIA, un entrenador personal de élite experto en calistenia.
+    const systemPrompt = `Eres CalistenIA, un entrenador personal de élite experto en calistenia estilo Navy SEAL.
 
 PERFIL DEL USUARIO:
 ${JSON.stringify(profile, null, 2)}
 
 CAPACIDADES:
-1. Generar rutinas variadas de calistenia (usa generate_routine)
+1. Generar rutinas épicas de calistenia (usa generate_routine)
 2. Consultar rutinas existentes (usa get_routines)
 3. Ver perfil del usuario (usa get_profile)
-4. Responder preguntas sobre ejercicios y técnica
 
-CUANDO EL USUARIO PIDA UNA RUTINA:
-- Usa la función generate_routine
-- muscleGroup: push, pull, legs, core, fullbody
-- Responde de forma motivadora después de generar
+IMPORTANTE: Cuando el usuario pida una rutina, SIEMPRE usa la función generate_routine.
+Después de generarla, responde con formato:
+"✅ Rutina generada: [NOMBRE]
 
-NO incluyas [ROUTINE_BUTTON:...] en tu respuesta, eso se añade automáticamente.`;
+[DESCRIPCIÓN BREVE]
+
+[ROUTINE_BUTTON:ID_DE_LA_RUTINA]"`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
       ...conversationHistory,
-      { role: 'user', content: message }
+      { role: 'user', content: lastUserMessage }
     ];
 
     const response = await fetch(XAI_API_URL, {
@@ -273,20 +290,25 @@ NO incluyas [ROUTINE_BUTTON:...] en tu respuesta, eso se añade automáticamente
         'Authorization': `Bearer ${XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-4-fast-reasoning',
-        messages,
+        model: 'grok-3-fast',
+        messages: messages,
         functions: AVAILABLE_FUNCTIONS,
         function_call: 'auto',
         temperature: 0.7,
       }),
     });
 
-    if (!response.ok) throw new Error('Error de API');
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Grok API error: ${response.status} - ${errorText}`);
+    }
 
     const data = await response.json();
     const choice = data.choices?.[0];
 
-    if (!choice) throw new Error('No response');
+    if (!choice) {
+      throw new Error('No response from Grok');
+    }
 
     // Si hay function call
     if (choice.message?.function_call) {
@@ -294,26 +316,22 @@ NO incluyas [ROUTINE_BUTTON:...] en tu respuesta, eso se añade automáticamente
       const functionArgs = JSON.parse(choice.message.function_call.arguments);
 
       let functionResult;
-      let routineGenerated = null;
+      let generatedRoutineId = null;
 
       if (functionName === 'generate_routine') {
-        const result = await generateRoutineWithAI(req.user.id, {
-          muscleGroup: functionArgs.muscleGroup || 'fullbody',
-          duration: functionArgs.duration || 45,
-          intensity: functionArgs.intensity || 'high',
-          customPrompt: functionArgs.customRequest,
+        const routineId = await generateEliteRoutine(req.user.id, functionArgs);
+        generatedRoutineId = routineId;
+        
+        const routine = await Routine.findByPk(routineId, {
+          include: [{ model: Exercise, as: 'Exercises' }]
         });
-
-        routineGenerated = result.routine;
 
         functionResult = {
           success: true,
-          routine_id: result.routine.id,
-          routine_name: result.routine.name,
-          routine_description: result.routine.description,
-          exercises_count: result.routine.Exercises?.length || 0,
-          estimated_duration: result.estimated_duration,
-          muscle_focus: functionArgs.muscleGroup || 'fullbody',
+          routine_id: routineId,
+          routine_name: routine.name,
+          routine_description: routine.description,
+          exercises_count: routine.Exercises?.length || 0
         };
       } else if (functionName === 'get_routines') {
         const routines = await Routine.findAll({
@@ -322,16 +340,20 @@ NO incluyas [ROUTINE_BUTTON:...] en tu respuesta, eso se añade automáticamente
           limit: functionArgs.limit || 5,
           include: [{ model: Exercise, as: 'Exercises' }]
         });
+
         functionResult = {
           routines: routines.map(r => ({
-            id: r.id, name: r.name, exercises_count: r.Exercises?.length || 0
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            exercises_count: r.Exercises?.length || 0
           }))
         };
       } else if (functionName === 'get_profile') {
         functionResult = { profile };
       }
 
-      // Segunda llamada con resultado
+      // Segunda llamada con el resultado de la función
       const secondResponse = await fetch(XAI_API_URL, {
         method: 'POST',
         headers: {
@@ -339,33 +361,49 @@ NO incluyas [ROUTINE_BUTTON:...] en tu respuesta, eso se añade automáticamente
           'Authorization': `Bearer ${XAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: 'grok-4-fast-reasoning',
+          model: 'grok-3-fast',
           messages: [
             ...messages,
             choice.message,
-            { role: 'function', name: functionName, content: JSON.stringify(functionResult) },
+            {
+              role: 'function',
+              name: functionName,
+              content: JSON.stringify(functionResult),
+            },
           ],
           temperature: 0.7,
         }),
       });
 
       const secondData = await secondResponse.json();
-      let replyText = secondData.choices?.[0]?.message?.content || 'Rutina generada correctamente';
+      let replyContent = secondData.choices?.[0]?.message?.content || 'Rutina generada correctamente';
 
-      // IMPORTANTE: Si se generó una rutina, añadir el botón automáticamente
-      if (routineGenerated) {
-        // Limpiar cualquier intento previo de botón que haya puesto Grok
-        replyText = replyText.replace(/\[ROUTINE_BUTTON:[^\]]+\]/gi, '').trim();
-        // Añadir el botón con el ID real
-        replyText += `\n\n[ROUTINE_BUTTON:${routineGenerated.id}]`;
+      // Si se generó una rutina, asegurar que el botón esté presente
+      if (generatedRoutineId && !replyContent.includes('[ROUTINE_BUTTON:')) {
+        replyContent += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
       }
 
+      // Devolver en formato compatible con frontend original
       return res.json({
-        reply: replyText,
+        choices: [{
+          message: {
+            content: replyContent
+          }
+        }],
         function_called: functionName,
         function_result: functionResult,
       });
     }
+
+    // Respuesta normal sin function call - formato compatible
+    res.json({
+      choices: [{
+        message: {
+          content: choice.message?.content || 'Lo siento, no pude generar una respuesta.'
+        }
+      }]
+    });
+
 
     // Respuesta normal sin function call
     res.json({ reply: choice.message?.content || 'Lo siento, no pude responder.' });
