@@ -11,6 +11,7 @@ COMPORTAMIENTO:
 - Responde de forma conversacional y motivadora
 - Adapta las rutinas a lo que el usuario pide
 - Usa nombres COMUNES de ejercicios, nunca nombres épicos o inventados
+- SIEMPRE responde algo útil, nunca dejes al usuario sin respuesta
 - IMPORTANTE: Cuando el usuario te diga qué tipo de entrenamiento hace (halterofilia, crossfit, calistenia, pesas, etc.), USA la función update_training_context para guardarlo
 
 CUANDO EL USUARIO MENCIONE SU TIPO DE ENTRENAMIENTO:
@@ -27,7 +28,31 @@ CUANDO GENERES RUTINAS:
 
 IMPORTANTE - DESPUÉS DE GENERAR UNA RUTINA:
 Incluye este patrón al final: [ROUTINE_BUTTON:ID]
-Donde ID es el routine_id que recibiste.`;
+Donde ID es el routine_id que recibiste.
+
+REGLA CRÍTICA: SIEMPRE responde con algo útil. Si no entiendes la pregunta, pide aclaración. Nunca respondas vacío.`;
+
+/**
+ * Extrae JSON de una respuesta que puede tener markdown
+ */
+function extractJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Limpiar markdown
+    let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      // Buscar JSON entre llaves
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        return JSON.parse(match[0]);
+      }
+      throw new Error('No se pudo extraer JSON');
+    }
+  }
+}
 
 // Función para generar rutina con IA
 async function generateRoutineWithAI(userId, args) {
@@ -64,7 +89,7 @@ REGLAS OBLIGATORIAS:
 3. Incluye 4-6 ejercicios variados
 4. Adapta al tipo de entrenamiento: ${trainingFocus}
 
-RESPONDE SOLO CON JSON VÁLIDO:
+RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
 {
   "name": "Rutina de [tipo] - [objetivo]",
   "description": "Descripción breve",
@@ -92,25 +117,38 @@ RESPONDE SOLO CON JSON VÁLIDO:
       body: JSON.stringify({
         model: 'grok-4-fast-reasoning',
         messages: [
-          { role: 'system', content: 'Eres un experto en fitness. Genera rutinas personalizadas. Responde SOLO con JSON válido.' },
+          { role: 'system', content: 'Eres un experto en fitness. Genera rutinas personalizadas. Responde SOLO con JSON válido, sin markdown.' },
           { role: 'user', content: routinePrompt }
         ],
-        max_tokens: 2000,
+        max_tokens: 2500,
         temperature: 0.7,
       }),
     });
 
+    if (!response.ok) {
+      console.error('Error de Grok API:', await response.text());
+      return { success: false, message: 'Error conectando con la IA' };
+    }
+
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || '';
     
-    content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    if (!content) {
+      return { success: false, message: 'La IA no generó contenido' };
+    }
     
-    const routineData = JSON.parse(content);
+    let routineData;
+    try {
+      routineData = extractJSON(content);
+    } catch (parseErr) {
+      console.error('Error parseando JSON de rutina:', content);
+      return { success: false, message: 'Error procesando la rutina generada' };
+    }
 
     const routine = await Routine.create({
       user_id: userId,
-      name: routineData.name,
-      description: routineData.description,
+      name: routineData.name || 'Rutina personalizada',
+      description: routineData.description || '',
       difficulty_level: routineData.difficulty_level || 'intermediate',
     });
 
@@ -119,7 +157,7 @@ RESPONDE SOLO CON JSON VÁLIDO:
         const ex = routineData.exercises[i];
         await Exercise.create({
           routine_id: routine.id,
-          name: ex.name,
+          name: ex.name || `Ejercicio ${i + 1}`,
           description: ex.description || '',
           sets: ex.sets || 3,
           reps: ex.reps || 10,
@@ -174,7 +212,6 @@ const availableFunctions = {
     return { success: true, message: 'Perfil actualizado', profile: updates };
   },
 
-  // NUEVA FUNCIÓN: Actualizar contexto de entrenamiento
   update_training_context: async (userId, args) => {
     let context = await UserContext.findOne({ where: { user_id: userId } });
     
@@ -368,12 +405,40 @@ const tools = [
   },
 ];
 
+// Respuestas de fallback cuando algo falla
+const FALLBACK_RESPONSES = [
+  '¿Podrías reformular tu pregunta? Estoy aquí para ayudarte con rutinas, ejercicios, nutrición o técnica.',
+  '¿En qué puedo ayudarte? Puedo crear rutinas personalizadas, resolver dudas sobre ejercicios o darte consejos de nutrición.',
+  'Cuéntame más sobre lo que necesitas. ¿Quieres que genere una rutina, te explique un ejercicio o hablemos de nutrición?',
+];
+
+function getRandomFallback() {
+  return FALLBACK_RESPONSES[Math.floor(Math.random() * FALLBACK_RESPONSES.length)];
+}
+
 router.post('/', auth, async (req, res) => {
   try {
     const { messages, model, max_tokens } = req.body;
 
     if (!process.env.REACT_APP_XAI_API_KEY) {
-      return res.status(500).json({ message: 'API key no configurada' });
+      console.error('API key no configurada');
+      return res.json({ 
+        choices: [{ 
+          message: { 
+            content: 'Hay un problema de configuración. Por favor contacta al soporte.' 
+          } 
+        }] 
+      });
+    }
+
+    if (!messages || messages.length === 0) {
+      return res.json({ 
+        choices: [{ 
+          message: { 
+            content: '¡Hola! Soy CalistenIA, tu coach de fitness. ¿En qué puedo ayudarte hoy?' 
+          } 
+        }] 
+      });
     }
 
     // Obtener contexto del usuario para incluirlo en el prompt
@@ -393,6 +458,8 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
       ...messages,
     ];
 
+    console.log('Enviando mensaje a Grok...');
+
     const response = await fetch(GROK_API_URL, {
       method: 'POST',
       headers: {
@@ -402,19 +469,41 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
       body: JSON.stringify({
         model: model || 'grok-4-fast-reasoning',
         messages: messagesWithSystem,
-        max_tokens: max_tokens || 1000,
+        max_tokens: max_tokens || 1500,
         tools: tools,
         tool_choice: 'auto',
       }),
     });
 
-    let data = await response.json();
-
     if (!response.ok) {
-      console.error('Error de Grok:', data);
-      return res.status(500).json({ error: data });
+      const errorText = await response.text();
+      console.error('Error de Grok API:', errorText);
+      
+      // Devolver respuesta de fallback en lugar de error
+      return res.json({ 
+        choices: [{ 
+          message: { 
+            content: getRandomFallback()
+          } 
+        }] 
+      });
     }
 
+    let data = await response.json();
+
+    // Verificar si hay respuesta válida
+    if (!data.choices || data.choices.length === 0) {
+      console.error('Respuesta vacía de Grok:', data);
+      return res.json({ 
+        choices: [{ 
+          message: { 
+            content: getRandomFallback()
+          } 
+        }] 
+      });
+    }
+
+    // Procesar tool calls si existen
     if (data.choices[0]?.message?.tool_calls) {
       const toolCalls = data.choices[0].message.tool_calls;
       const toolResults = [];
@@ -422,65 +511,116 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
 
       for (const toolCall of toolCalls) {
         const functionName = toolCall.function.name;
-        const args = JSON.parse(toolCall.function.arguments || '{}');
+        let args = {};
+        
+        try {
+          args = JSON.parse(toolCall.function.arguments || '{}');
+        } catch (parseErr) {
+          console.error('Error parseando argumentos:', parseErr);
+          continue;
+        }
 
         console.log(`Ejecutando función: ${functionName}`, args);
 
         if (availableFunctions[functionName]) {
-          const result = await availableFunctions[functionName](req.user.id, args);
+          try {
+            const result = await availableFunctions[functionName](req.user.id, args);
+            
+            if (functionName === 'generate_routine' && result.routine_id) {
+              generatedRoutineId = result.routine_id;
+            }
+            
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: 'tool',
+              content: JSON.stringify(result),
+            });
+          } catch (funcErr) {
+            console.error(`Error ejecutando ${functionName}:`, funcErr);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: 'tool',
+              content: JSON.stringify({ success: false, message: 'Error ejecutando función' }),
+            });
+          }
+        }
+      }
+
+      // Segunda llamada con resultados de las funciones
+      if (toolResults.length > 0) {
+        const followUpMessages = [
+          ...messagesWithSystem,
+          data.choices[0].message,
+          ...toolResults,
+        ];
+
+        try {
+          const followUpResponse = await fetch(GROK_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: model || 'grok-4-fast-reasoning',
+              messages: followUpMessages,
+              max_tokens: max_tokens || 1500,
+            }),
+          });
+
+          if (followUpResponse.ok) {
+            data = await followUpResponse.json();
+          }
+        } catch (followUpErr) {
+          console.error('Error en follow-up:', followUpErr);
+        }
+        
+        // Agregar botón de rutina si se generó una
+        if (generatedRoutineId) {
+          let content = data.choices?.[0]?.message?.content || 'Rutina creada exitosamente.';
           
-          if (functionName === 'generate_routine' && result.routine_id) {
-            generatedRoutineId = result.routine_id;
+          if (!content.includes('[ROUTINE_BUTTON:')) {
+            content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
+            if (data.choices?.[0]?.message) {
+              data.choices[0].message.content = content;
+            }
           }
           
-          toolResults.push({
-            tool_call_id: toolCall.id,
-            role: 'tool',
-            content: JSON.stringify(result),
+          return res.json({
+            ...data,
+            routine_id: generatedRoutineId,
           });
         }
       }
+    }
 
-      const followUpMessages = [
-        ...messagesWithSystem,
-        data.choices[0].message,
-        ...toolResults,
-      ];
-
-      const followUpResponse = await fetch(GROK_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.REACT_APP_XAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: model || 'grok-4-fast-reasoning',
-          messages: followUpMessages,
-          max_tokens: max_tokens || 1000,
-        }),
+    // Verificar que la respuesta final tenga contenido
+    const finalContent = data.choices?.[0]?.message?.content;
+    
+    if (!finalContent || finalContent.trim() === '') {
+      console.error('Respuesta final vacía');
+      return res.json({ 
+        choices: [{ 
+          message: { 
+            content: getRandomFallback()
+          } 
+        }] 
       });
-
-      data = await followUpResponse.json();
-      
-      if (generatedRoutineId) {
-        let content = data.choices?.[0]?.message?.content || '';
-        
-        if (!content.includes('[ROUTINE_BUTTON:')) {
-          content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
-          data.choices[0].message.content = content;
-        }
-        
-        return res.json({
-          ...data,
-          routine_id: generatedRoutineId,
-        });
-      }
     }
 
     res.json(data);
+    
   } catch (err) {
     console.error('Error en chat:', err);
-    res.status(500).json({ message: 'Error en el servidor' });
+    
+    // NUNCA devolver error 500, siempre dar una respuesta
+    res.json({ 
+      choices: [{ 
+        message: { 
+          content: 'Tuve un problema técnico. ¿Puedes intentar de nuevo?' 
+        } 
+      }] 
+    });
   }
 });
 
