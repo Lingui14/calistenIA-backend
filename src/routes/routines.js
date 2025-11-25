@@ -54,6 +54,11 @@ PERFIL USUARIO:
 - Ejercicios favoritos: ${JSON.stringify(context?.preferred_exercises || [])}
 - Ejercicios a evitar: ${JSON.stringify(context?.avoided_exercises || [])}
 - Lesiones: ${JSON.stringify(context?.injuries || [])}
+- Duración preferida: ${context?.preferred_duration || 45} minutos
+- Tipos de workout preferidos: ${JSON.stringify(context?.preferred_workout_types || [])}
+
+HISTORIAL RECIENTE:
+${context?.training_summary || 'Sin entrenamientos registrados'}
 
 ${exerciseStyle}
 
@@ -218,6 +223,69 @@ router.post('/', auth, async (req, res) => {
         ...ex,
         order_index: i + 1,
       })));
+
+      // ========== APRENDER DE LA RUTINA MANUAL ==========
+      try {
+        const exerciseNames = exercises.map(ex => ex.name?.trim()).filter(Boolean);
+        
+        let context = await UserContext.findOne({ where: { user_id: req.user.id } });
+        if (!context) {
+          context = await UserContext.create({ user_id: req.user.id });
+        }
+        
+        // Agregar ejercicios a favoritos (sin duplicados, máximo 30)
+        const currentFavorites = context.preferred_exercises || [];
+        const newFavorites = [...new Set([...currentFavorites, ...exerciseNames])].slice(0, 30);
+        
+        // Detectar tipo de entrenamiento basado en ejercicios
+        const exerciseTypes = exercises.map(ex => ex.exercise_type);
+        let detectedWorkoutTypes = context.preferred_workout_types || [];
+        
+        if (exerciseTypes.includes('hiit') && !detectedWorkoutTypes.includes('hiit')) {
+          detectedWorkoutTypes.push('hiit');
+        }
+        if (exerciseTypes.includes('amrap') && !detectedWorkoutTypes.includes('amrap')) {
+          detectedWorkoutTypes.push('amrap');
+        }
+        if (exerciseTypes.includes('emom') && !detectedWorkoutTypes.includes('emom')) {
+          detectedWorkoutTypes.push('emom');
+        }
+        if (exerciseTypes.every(t => t === 'standard') && !detectedWorkoutTypes.includes('strength')) {
+          detectedWorkoutTypes.push('strength');
+        }
+        
+        // Detectar training_focus basado en nombres de ejercicios
+        const allNames = exerciseNames.join(' ').toLowerCase();
+        let trainingFocus = context.training_focus;
+        
+        if (!trainingFocus || trainingFocus === 'calisthenics') {
+          if (allNames.includes('clean') || allNames.includes('snatch') || allNames.includes('jerk') || allNames.includes('deadlift')) {
+            trainingFocus = 'weightlifting';
+          } else if (allNames.includes('thruster') || allNames.includes('wall ball') || allNames.includes('box jump')) {
+            trainingFocus = 'crossfit';
+          } else if (allNames.includes('bench') || allNames.includes('curl') || allNames.includes('press') && allNames.includes('dumbbell')) {
+            trainingFocus = 'bodybuilding';
+          } else if (allNames.includes('squat') || allNames.includes('deadlift') || allNames.includes('bench press')) {
+            trainingFocus = 'powerlifting';
+          }
+        }
+        
+        await context.update({ 
+          preferred_exercises: newFavorites,
+          preferred_workout_types: detectedWorkoutTypes,
+          training_focus: trainingFocus,
+        });
+        
+        console.log('📚 Aprendido de rutina manual:', { 
+          ejercicios: exerciseNames.length, 
+          tiposWorkout: detectedWorkoutTypes,
+          trainingFocus 
+        });
+      } catch (learnErr) {
+        console.error('Error aprendiendo de rutina:', learnErr);
+        // No fallar la creación de rutina si falla el aprendizaje
+      }
+      // ========== FIN APRENDIZAJE ==========
     }
 
     const fullRoutine = await Routine.findByPk(routine.id, {
@@ -226,6 +294,7 @@ router.post('/', auth, async (req, res) => {
 
     res.json(fullRoutine);
   } catch (err) {
+    console.error('Error creando rutina:', err);
     res.status(500).json({ message: 'Error creando rutina' });
   }
 });

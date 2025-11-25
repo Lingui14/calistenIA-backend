@@ -77,6 +77,10 @@ router.post('/log', auth, async (req, res) => {
  * POST /api/training/finish
  * Finaliza la sesión de entrenamiento
  */
+/**
+ * POST /api/training/finish
+ * Finaliza la sesión de entrenamiento y aprende del usuario
+ */
 router.post('/finish', auth, async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -86,7 +90,15 @@ router.post('/finish', auth, async (req, res) => {
     }
 
     const session = await TrainingSession.findOne({
-      where: { id: sessionId, user_id: req.user.id }
+      where: { id: sessionId, user_id: req.user.id },
+      include: [
+        { model: Routine, as: 'Routine' },
+        { 
+          model: ExerciseLog, 
+          as: 'ExerciseLogs',
+          include: [{ model: Exercise, as: 'Exercise' }]
+        }
+      ]
     });
 
     if (!session) {
@@ -98,21 +110,68 @@ router.post('/finish', auth, async (req, res) => {
     
     // Calcular duración en minutos
     const durationMs = session.end_time.getTime() - new Date(session.start_time).getTime();
-    session.total_duration = Math.floor(durationMs / 1000 / 60); // minutos
+    session.total_duration = Math.floor(durationMs / 1000 / 60);
 
     await session.save();
 
-    // Obtener resumen con ejercicios completados
-    const logs = await ExerciseLog.findAll({
-      where: { session_id: sessionId }
-    });
+    // ========== APRENDER DEL ENTRENAMIENTO COMPLETADO ==========
+    try {
+      const { UserContext } = require('../models');
+      
+      let context = await UserContext.findOne({ where: { user_id: req.user.id } });
+      if (!context) {
+        context = await UserContext.create({ user_id: req.user.id });
+      }
 
-    res.json({
-      ...session.toJSON(),
-      exercisesCompleted: logs.length,
-      totalSets: logs.reduce((acc, log) => acc + (log.completed_sets || 0), 0),
-      totalReps: logs.reduce((acc, log) => acc + (log.completed_reps || 0), 0),
-    });
+      // Extraer ejercicios completados
+      const completedExercises = session.ExerciseLogs?.map(log => log.Exercise?.name).filter(Boolean) || [];
+      
+      // Actualizar ejercicios favoritos
+      const currentFavorites = context.preferred_exercises || [];
+      const newFavorites = [...new Set([...currentFavorites, ...completedExercises])].slice(0, 30);
+
+      // Calcular duración promedio preferida
+      const currentDuration = context.preferred_duration || 45;
+      const newPreferredDuration = Math.round((currentDuration + session.total_duration) / 2);
+
+      // Actualizar resumen de entrenamiento
+      const today = new Date().toLocaleDateString('es-MX');
+      const routineName = session.Routine?.name || 'Rutina';
+      const exerciseCount = completedExercises.length;
+      
+      let trainingSummary = context.training_summary || '';
+      const newEntry = `${today}: ${routineName} (${exerciseCount} ejercicios, ${session.total_duration} min)`;
+      
+      // Mantener solo los últimos 10 entrenamientos en el resumen
+      const summaryLines = trainingSummary.split('\n').filter(Boolean);
+      summaryLines.unshift(newEntry);
+      trainingSummary = summaryLines.slice(0, 10).join('\n');
+
+      await context.update({
+        preferred_exercises: newFavorites,
+        preferred_duration: newPreferredDuration,
+        training_summary: trainingSummary,
+      });
+
+      console.log('📚 Aprendido de entrenamiento:', {
+        duracion: session.total_duration,
+        ejercicios: completedExercises.length,
+        nuevaDuracionPreferida: newPreferredDuration
+      });
+    } catch (learnErr) {
+      console.error('Error aprendiendo de entrenamiento:', learnErr);
+      // No fallar si falla el aprendizaje
+    }
+    // ========== FIN APRENDIZAJE ==========
+
+    // Obtener resumen de la sesión
+    const summary = {
+      duration: session.total_duration,
+      exercisesCompleted: session.ExerciseLogs?.length || 0,
+      routineName: session.Routine?.name,
+    };
+
+    res.json({ session, summary });
   } catch (err) {
     console.error('Error en POST /training/finish:', err);
     res.status(500).json({ message: 'Error finalizando sesión' });
