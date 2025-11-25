@@ -81,6 +81,10 @@ router.post('/log', auth, async (req, res) => {
  * POST /api/training/finish
  * Finaliza la sesión de entrenamiento y aprende del usuario
  */
+/**
+ * POST /api/training/finish
+ * Finaliza la sesión de entrenamiento, aprende del usuario y actualiza rachas
+ */
 router.post('/finish', auth, async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -108,19 +112,55 @@ router.post('/finish', auth, async (req, res) => {
     session.end_time = new Date();
     session.completed = true;
     
-    // Calcular duración en minutos
     const durationMs = session.end_time.getTime() - new Date(session.start_time).getTime();
     session.total_duration = Math.floor(durationMs / 1000 / 60);
 
     await session.save();
 
-    // ========== APRENDER DEL ENTRENAMIENTO COMPLETADO ==========
+    // ========== APRENDER Y ACTUALIZAR RACHAS ==========
+    let streakData = { current: 0, longest: 0, isNewRecord: false };
+    
     try {
       const { UserContext } = require('../models');
       
       let context = await UserContext.findOne({ where: { user_id: req.user.id } });
       if (!context) {
         context = await UserContext.create({ user_id: req.user.id });
+      }
+
+      // Fecha de hoy (solo fecha, sin hora)
+      const today = new Date().toISOString().split('T')[0];
+      const lastWorkout = context.last_workout_date;
+      
+      let newStreak = context.current_streak || 0;
+      let longestStreak = context.longest_streak || 0;
+      let isNewRecord = false;
+
+      if (!lastWorkout) {
+        // Primer entrenamiento
+        newStreak = 1;
+      } else {
+        const lastDate = new Date(lastWorkout);
+        const todayDate = new Date(today);
+        const diffTime = todayDate.getTime() - lastDate.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 0) {
+          // Ya entrenó hoy, no cambiar racha
+          newStreak = context.current_streak;
+        } else if (diffDays === 1) {
+          // Día consecutivo, aumentar racha
+          newStreak = (context.current_streak || 0) + 1;
+        } else {
+          // Se rompió la racha, empezar de nuevo
+          newStreak = 1;
+        }
+      }
+
+      // Verificar si es nuevo récord
+      if (newStreak > longestStreak) {
+        longestStreak = newStreak;
+        isNewRecord = true;
       }
 
       // Extraer ejercicios completados
@@ -135,40 +175,57 @@ router.post('/finish', auth, async (req, res) => {
       const newPreferredDuration = Math.round((currentDuration + session.total_duration) / 2);
 
       // Actualizar resumen de entrenamiento
-      const today = new Date().toLocaleDateString('es-MX');
+      const todayFormatted = new Date().toLocaleDateString('es-MX');
       const routineName = session.Routine?.name || 'Rutina';
       const exerciseCount = completedExercises.length;
       
       let trainingSummary = context.training_summary || '';
-      const newEntry = `${today}: ${routineName} (${exerciseCount} ejercicios, ${session.total_duration} min)`;
+      const newEntry = `${todayFormatted}: ${routineName} (${exerciseCount} ejercicios, ${session.total_duration} min)`;
       
-      // Mantener solo los últimos 10 entrenamientos en el resumen
       const summaryLines = trainingSummary.split('\n').filter(Boolean);
       summaryLines.unshift(newEntry);
       trainingSummary = summaryLines.slice(0, 10).join('\n');
+
+      // Actualizar totales
+      const totalWorkouts = (context.total_workouts || 0) + 1;
+      const totalMinutes = (context.total_minutes || 0) + session.total_duration;
 
       await context.update({
         preferred_exercises: newFavorites,
         preferred_duration: newPreferredDuration,
         training_summary: trainingSummary,
+        current_streak: newStreak,
+        longest_streak: longestStreak,
+        last_workout_date: today,
+        total_workouts: totalWorkouts,
+        total_minutes: totalMinutes,
       });
 
-      console.log('📚 Aprendido de entrenamiento:', {
-        duracion: session.total_duration,
-        ejercicios: completedExercises.length,
-        nuevaDuracionPreferida: newPreferredDuration
+      streakData = { 
+        current: newStreak, 
+        longest: longestStreak, 
+        isNewRecord,
+        totalWorkouts,
+        totalMinutes 
+      };
+
+      console.log('📚 Actualizado:', {
+        racha: newStreak,
+        récord: longestStreak,
+        nuevoRécord: isNewRecord,
+        totalWorkouts,
+        totalMinutes
       });
     } catch (learnErr) {
-      console.error('Error aprendiendo de entrenamiento:', learnErr);
-      // No fallar si falla el aprendizaje
+      console.error('Error actualizando contexto:', learnErr);
     }
     // ========== FIN APRENDIZAJE ==========
 
-    // Obtener resumen de la sesión
     const summary = {
       duration: session.total_duration,
       exercisesCompleted: session.ExerciseLogs?.length || 0,
       routineName: session.Routine?.name,
+      streak: streakData,
     };
 
     res.json({ session, summary });
@@ -206,6 +263,57 @@ router.get('/history', auth, async (req, res) => {
   } catch (err) {
     console.error('Error en GET /training/history:', err);
     res.status(500).json({ message: 'Error obteniendo historial', error: err.message });
+  }
+});
+
+/**
+ * GET /api/training/stats
+ * Obtiene estadísticas del usuario (rachas, totales, etc.)
+ */
+router.get('/stats', auth, async (req, res) => {
+  try {
+    const { UserContext } = require('../models');
+    
+    let context = await UserContext.findOne({ where: { user_id: req.user.id } });
+    
+    if (!context) {
+      return res.json({
+        current_streak: 0,
+        longest_streak: 0,
+        total_workouts: 0,
+        total_minutes: 0,
+        last_workout_date: null,
+      });
+    }
+
+    // Verificar si la racha sigue activa
+    const today = new Date().toISOString().split('T')[0];
+    const lastWorkout = context.last_workout_date;
+    let currentStreak = context.current_streak || 0;
+
+    if (lastWorkout) {
+      const lastDate = new Date(lastWorkout);
+      const todayDate = new Date(today);
+      const diffTime = todayDate.getTime() - lastDate.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+      // Si pasó más de 1 día, la racha se rompió
+      if (diffDays > 1) {
+        currentStreak = 0;
+        await context.update({ current_streak: 0 });
+      }
+    }
+
+    res.json({
+      current_streak: currentStreak,
+      longest_streak: context.longest_streak || 0,
+      total_workouts: context.total_workouts || 0,
+      total_minutes: context.total_minutes || 0,
+      last_workout_date: context.last_workout_date,
+    });
+  } catch (err) {
+    console.error('Error obteniendo stats:', err);
+    res.status(500).json({ message: 'Error obteniendo estadísticas' });
   }
 });
 

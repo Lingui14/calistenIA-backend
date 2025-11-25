@@ -16,7 +16,7 @@ const UserContext = sequelize.define('UserContext', {
   // Contexto de entrenamiento
   training_focus: {
     type: DataTypes.STRING,
-    defaultValue: 'calisthenics', // calisthenics, strength, mobility, skills
+    defaultValue: 'calisthenics',
   },
   preferred_exercises: {
     type: DataTypes.JSON,
@@ -30,14 +30,13 @@ const UserContext = sequelize.define('UserContext', {
     type: DataTypes.JSON,
     defaultValue: [],
   },
-  // Preferencias de rutina
   preferred_duration: {
     type: DataTypes.INTEGER,
-    defaultValue: 45, // minutos
+    defaultValue: 45,
   },
   preferred_intensity: {
     type: DataTypes.STRING,
-    defaultValue: 'moderate', // low, moderate, high, extreme
+    defaultValue: 'moderate',
   },
   include_warmup: {
     type: DataTypes.BOOLEAN,
@@ -47,25 +46,47 @@ const UserContext = sequelize.define('UserContext', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
   },
-  // Tipos de entrenamiento preferidos
   preferred_workout_types: {
     type: DataTypes.JSON,
-    defaultValue: ['strength'], // strength, amrap, hiit, emom, circuit
+    defaultValue: ['strength'],
   },
   // Spotify
   spotify_access_token: DataTypes.TEXT,
   spotify_refresh_token: DataTypes.TEXT,
   spotify_token_expires: DataTypes.DATE,
-  // Historial resumido (para contexto de IA)
+  // Historial resumido
   training_summary: {
-    type: DataTypes.TEXT, // Resumen en texto de su historial
+    type: DataTypes.TEXT,
     defaultValue: '',
   },
-  // Último mensaje/contexto del chat
   chat_context: {
     type: DataTypes.TEXT,
     defaultValue: '',
   },
+  
+  // ========== NUEVOS CAMPOS - RACHAS ==========
+  current_streak: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  longest_streak: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  last_workout_date: {
+    type: DataTypes.DATEONLY,
+    allowNull: true,
+  },
+  total_workouts: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  total_minutes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  // ========== FIN NUEVOS CAMPOS ==========
+  
 }, {
   tableName: 'UserContexts',
   timestamps: true,
