@@ -4,33 +4,59 @@ const { UserProfile, UserContext, Routine, Exercise } = require('../models');
 
 const GROK_API_URL = 'https://api.x.ai/v1/chat/completions';
 
-// System prompt para el chat
-const SYSTEM_PROMPT = `Eres CalistenIA, un coach de fitness experto y amigable.
+// System prompt MEJORADO para el chat
+const SYSTEM_PROMPT = `Eres CalistenIA, un coach de fitness experto y amigable que habla español.
 
-COMPORTAMIENTO:
-- Responde de forma conversacional y motivadora
-- Adapta las rutinas a lo que el usuario pide
-- Usa nombres COMUNES de ejercicios, nunca nombres épicos o inventados
-- SIEMPRE responde algo útil, nunca dejes al usuario sin respuesta
-- IMPORTANTE: Cuando el usuario te diga qué tipo de entrenamiento hace (halterofilia, crossfit, calistenia, pesas, etc.), USA la función update_training_context para guardarlo
+REGLA PRINCIPAL: SIEMPRE intenta ayudar al usuario. NUNCA respondas pidiendo que reformule a menos que sea absolutamente imposible entender.
 
-CUANDO EL USUARIO MENCIONE SU TIPO DE ENTRENAMIENTO:
-- Si dice "hago halterofilia" -> guarda training_focus: "weightlifting"
-- Si dice "hago crossfit" -> guarda training_focus: "crossfit"  
-- Si dice "hago calistenia" -> guarda training_focus: "calisthenics"
-- Si dice "mezclo pesas y calistenia" -> guarda training_focus: "mixed"
-- Si menciona ejercicios que le gustan -> guarda en preferred_exercises
+DETECCIÓN DE INTENCIONES - USA LAS FUNCIONES:
 
-CUANDO GENERES RUTINAS:
-- Usa nombres claros: "Flexiones", "Sentadillas", "Clean and Jerk", "Snatch"
-- Incluye descripción de cómo hacer cada ejercicio
-- Adapta al tipo de entrenamiento del usuario (usa su training_focus)
+1. SI EL USUARIO PIDE UNA RUTINA (cualquier variación):
+   - "hazme una rutina" -> USA generate_routine
+   - "genera una rutina" -> USA generate_routine
+   - "dame una rutina" -> USA generate_routine
+   - "quiero una rutina" -> USA generate_routine
+   - "mándame una rutina" -> USA generate_routine  
+   - "rutina basada en mi perfil" -> USA generate_routine
+   - "rutina personalizada" -> USA generate_routine
+   - "entrenamiento para hoy" -> USA generate_routine
+   - "qué puedo entrenar" -> USA generate_routine
+   - "necesito ejercicios" -> USA generate_routine
+   - Cualquier mención de "rutina" + petición -> USA generate_routine
 
-IMPORTANTE - DESPUÉS DE GENERAR UNA RUTINA:
-Incluye este patrón al final: [ROUTINE_BUTTON:ID]
-Donde ID es el routine_id que recibiste.
+2. SI EL USUARIO MENCIONA SU TIPO DE ENTRENAMIENTO:
+   - "hago halterofilia/olimpico/weightlifting" -> USA update_training_context con training_focus: "weightlifting"
+   - "hago crossfit" -> USA update_training_context con training_focus: "crossfit"
+   - "hago calistenia/peso corporal" -> USA update_training_context con training_focus: "calisthenics"
+   - "mezclo pesas y calistenia" -> USA update_training_context con training_focus: "mixed"
+   - "hago gym/gimnasio/bodybuilding" -> USA update_training_context con training_focus: "bodybuilding"
+   - "hago powerlifting/fuerza" -> USA update_training_context con training_focus: "powerlifting"
 
-REGLA CRÍTICA: SIEMPRE responde con algo útil. Si no entiendes la pregunta, pide aclaración. Nunca respondas vacío.`;
+3. SI EL USUARIO PREGUNTA POR SUS RUTINAS:
+   - "mis rutinas" -> USA get_routines
+   - "qué rutinas tengo" -> USA get_routines
+   - "muéstrame mis rutinas" -> USA get_routines
+
+4. SI EL USUARIO PREGUNTA POR SU PERFIL:
+   - "mi perfil" -> USA get_profile
+   - "qué sabes de mí" -> USA get_profile
+
+PARA TODO LO DEMÁS:
+- Preguntas sobre ejercicios -> Responde directamente con información útil
+- Preguntas sobre nutrición -> Responde directamente
+- Preguntas sobre técnica -> Responde directamente
+- Saludos -> Responde amablemente y pregunta en qué puedes ayudar
+- Mensajes confusos -> Intenta interpretar la intención, no pidas reformular
+
+ESTILO DE COMUNICACIÓN:
+- Sé amigable y motivador
+- Responde en español
+- Sé conciso pero completo
+- Usa nombres COMUNES de ejercicios
+
+DESPUÉS DE GENERAR UNA RUTINA:
+Incluye al final: [ROUTINE_BUTTON:ID]
+Donde ID es el routine_id que recibiste.`;
 
 /**
  * Extrae JSON de una respuesta que puede tener markdown
@@ -39,12 +65,10 @@ function extractJSON(text) {
   try {
     return JSON.parse(text);
   } catch (e) {
-    // Limpiar markdown
     let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
     try {
       return JSON.parse(cleaned);
     } catch (e2) {
-      // Buscar JSON entre llaves
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
         return JSON.parse(match[0]);
@@ -59,7 +83,6 @@ async function generateRoutineWithAI(userId, args) {
   const profile = await UserProfile.findOne({ where: { user_id: userId } });
   const context = await UserContext.findOne({ where: { user_id: userId } });
   
-  // Determinar tipo de entrenamiento
   const trainingFocus = args.workout_type || context?.training_focus || 'mixed';
   
   let exerciseStyle = '';
@@ -69,40 +92,37 @@ async function generateRoutineWithAI(userId, args) {
     exerciseStyle = 'Mezcla ejercicios de halterofilia con calistenia y cardio: Thrusters, Wall Balls, Box Jumps, Burpees, Pull-ups';
   } else if (trainingFocus === 'mixed') {
     exerciseStyle = 'Mezcla ejercicios con peso (barra, mancuernas) y peso corporal';
+  } else if (trainingFocus === 'bodybuilding') {
+    exerciseStyle = 'Ejercicios de hipertrofia: Press banca, Curl biceps, Extensiones triceps, Elevaciones laterales';
+  } else if (trainingFocus === 'powerlifting') {
+    exerciseStyle = 'Enfoque en fuerza maxima: Sentadilla, Peso muerto, Press banca, con altas cargas';
   } else {
     exerciseStyle = 'Usa ejercicios de peso corporal: Flexiones, Dominadas, Sentadillas, Fondos';
   }
 
-  const routinePrompt = `Genera una rutina de ejercicios con estas características:
+  const routinePrompt = `Genera una rutina de ejercicios:
 - Nivel: ${args.difficulty || profile?.experience_level || 'intermediate'}
 - Objetivo: ${args.goal || profile?.goal || 'fuerza general'}
-- Tipo de entrenamiento preferido: ${trainingFocus}
-- Ejercicios favoritos del usuario: ${JSON.stringify(context?.preferred_exercises || [])}
-${args.custom_request ? `- Petición especial: ${args.custom_request}` : ''}
+- Tipo: ${trainingFocus}
+- Ejercicios favoritos: ${JSON.stringify(context?.preferred_exercises || [])}
+${args.custom_request ? `- Petición: ${args.custom_request}` : ''}
 
-ESTILO DE EJERCICIOS:
-${exerciseStyle}
+ESTILO: ${exerciseStyle}
 
-REGLAS OBLIGATORIAS:
-1. Usa NOMBRES COMUNES de ejercicios
-2. Cada ejercicio DEBE tener una descripción clara
-3. Incluye 4-6 ejercicios variados
-4. Adapta al tipo de entrenamiento: ${trainingFocus}
-
-RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
+RESPONDE SOLO CON JSON (sin markdown):
 {
-  "name": "Rutina de [tipo] - [objetivo]",
+  "name": "Rutina de [tipo]",
   "description": "Descripción breve",
-  "difficulty_level": "beginner|intermediate|advanced",
+  "difficulty_level": "intermediate",
   "exercises": [
     {
-      "name": "Nombre común del ejercicio",
-      "description": "Posición inicial, movimiento y tips",
+      "name": "Nombre del ejercicio",
+      "description": "Como hacerlo",
       "sets": 3,
       "reps": 10,
       "rest_time": 60,
       "exercise_type": "standard",
-      "notes": "Variaciones opcionales"
+      "notes": ""
     }
   ]
 }`;
@@ -117,7 +137,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
       body: JSON.stringify({
         model: 'grok-4-fast-reasoning',
         messages: [
-          { role: 'system', content: 'Eres un experto en fitness. Genera rutinas personalizadas. Responde SOLO con JSON válido, sin markdown.' },
+          { role: 'system', content: 'Genera rutinas de ejercicio. Responde SOLO con JSON valido, sin markdown.' },
           { role: 'user', content: routinePrompt }
         ],
         max_tokens: 2500,
@@ -126,7 +146,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
     });
 
     if (!response.ok) {
-      console.error('Error de Grok API:', await response.text());
+      console.error('Error de Grok API en rutina');
       return { success: false, message: 'Error conectando con la IA' };
     }
 
@@ -134,15 +154,15 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
     let content = data.choices?.[0]?.message?.content || '';
     
     if (!content) {
-      return { success: false, message: 'La IA no generó contenido' };
+      return { success: false, message: 'La IA no genero contenido' };
     }
     
     let routineData;
     try {
       routineData = extractJSON(content);
     } catch (parseErr) {
-      console.error('Error parseando JSON de rutina:', content);
-      return { success: false, message: 'Error procesando la rutina generada' };
+      console.error('Error parseando JSON:', content);
+      return { success: false, message: 'Error procesando la rutina' };
     }
 
     const routine = await Routine.create({
@@ -175,7 +195,7 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
 
     return {
       success: true,
-      message: `Rutina "${routineData.name}" creada`,
+      message: `Rutina "${routineData.name}" creada con ${routineData.exercises?.length || 0} ejercicios`,
       routine_id: routine.id,
       routine: {
         id: fullRoutine.id,
@@ -191,12 +211,12 @@ RESPONDE SOLO CON JSON VÁLIDO (sin markdown, sin texto adicional):
       },
     };
   } catch (err) {
-    console.error('Error generando rutina con IA:', err);
+    console.error('Error generando rutina:', err);
     return { success: false, message: 'Error generando la rutina' };
   }
 }
 
-// Funciones disponibles para Grok
+// Funciones disponibles
 const availableFunctions = {
   update_profile: async (userId, args) => {
     const profile = await UserProfile.findOne({ where: { user_id: userId } });
@@ -232,7 +252,7 @@ const availableFunctions = {
     
     return { 
       success: true, 
-      message: 'Preferencias de entrenamiento guardadas',
+      message: 'Preferencias guardadas',
       context: updates 
     };
   },
@@ -244,6 +264,7 @@ const availableFunctions = {
     return {
       success: true,
       profile: {
+        name: profile?.full_name,
         experience: profile?.experience_level,
         goal: profile?.goal,
         available_days: profile?.available_days,
@@ -267,10 +288,12 @@ const availableFunctions = {
     });
     return {
       success: true,
+      count: routines.length,
       routines: routines.map(r => ({
         id: r.id,
         name: r.name,
         difficulty: r.difficulty_level,
+        exercises_count: r.Exercises?.length || 0,
         exercises: r.Exercises?.map(e => e.name) || [],
       })),
     };
@@ -281,33 +304,32 @@ const availableFunctions = {
   },
 };
 
-// Definición de tools para Grok
+// Tools para Grok
 const tools = [
   {
     type: 'function',
     function: {
-      name: 'update_profile',
-      description: 'Actualiza el perfil del usuario (nivel de experiencia, objetivo, días disponibles)',
+      name: 'generate_routine',
+      description: 'Genera una rutina de ejercicios personalizada. USA ESTA FUNCION cuando el usuario pida: rutina, entrenamiento, ejercicios, workout, o cualquier variacion de "hazme/dame/genera/quiero una rutina".',
       parameters: {
         type: 'object',
         properties: {
-          experience: {
+          difficulty: {
             type: 'string',
             enum: ['beginner', 'intermediate', 'advanced'],
-            description: 'Nivel de experiencia del usuario',
+            description: 'Nivel de dificultad',
           },
           goal: {
             type: 'string',
-            enum: ['build_muscle', 'lose_weight', 'maintain', 'flexibility', 'strength'],
-            description: 'Objetivo del usuario',
+            description: 'Objetivo (fuerza, hipertrofia, resistencia, etc)',
           },
-          available_days: {
-            type: 'number',
-            description: 'Días disponibles para entrenar por semana (1-7)',
+          workout_type: {
+            type: 'string',
+            description: 'Tipo de entrenamiento',
           },
-          session_duration: {
-            type: 'number',
-            description: 'Duración de cada sesión en minutos',
+          custom_request: {
+            type: 'string',
+            description: 'Peticion especifica del usuario',
           },
         },
       },
@@ -317,43 +339,33 @@ const tools = [
     type: 'function',
     function: {
       name: 'update_training_context',
-      description: 'Actualiza las preferencias de entrenamiento del usuario. USA ESTA FUNCIÓN cuando el usuario mencione qué tipo de entrenamiento hace o qué ejercicios le gustan.',
+      description: 'Actualiza preferencias de entrenamiento. USA cuando el usuario diga que tipo de entrenamiento hace (halterofilia, crossfit, calistenia, gym, etc).',
       parameters: {
         type: 'object',
         properties: {
           training_focus: {
             type: 'string',
             enum: ['calisthenics', 'weightlifting', 'crossfit', 'mixed', 'bodybuilding', 'powerlifting'],
-            description: 'Tipo principal de entrenamiento: calisthenics (peso corporal), weightlifting (halterofilia/olímpico), crossfit, mixed (mezcla de pesas y calistenia), bodybuilding, powerlifting',
+            description: 'Tipo principal de entrenamiento',
           },
           preferred_exercises: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Lista de ejercicios favoritos del usuario',
+            description: 'Ejercicios favoritos',
           },
           avoided_exercises: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Ejercicios que el usuario quiere evitar',
+            description: 'Ejercicios a evitar',
           },
           preferred_intensity: {
             type: 'string',
             enum: ['low', 'moderate', 'high', 'extreme'],
-            description: 'Intensidad preferida',
-          },
-          preferred_duration: {
-            type: 'number',
-            description: 'Duración preferida en minutos',
           },
           injuries: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Lesiones o limitaciones del usuario',
-          },
-          preferred_workout_types: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Tipos de workout preferidos: strength, hiit, amrap, emom, circuit',
+            description: 'Lesiones',
           },
         },
       },
@@ -363,7 +375,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'get_profile',
-      description: 'Obtiene el perfil y preferencias de entrenamiento del usuario',
+      description: 'Obtiene el perfil del usuario. USA cuando pregunte sobre su perfil o que sabes de el.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -371,50 +383,33 @@ const tools = [
     type: 'function',
     function: {
       name: 'get_routines',
-      description: 'Obtiene las rutinas del usuario',
+      description: 'Obtiene las rutinas guardadas del usuario. USA cuando pregunte por sus rutinas existentes.',
       parameters: { type: 'object', properties: {} },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'generate_routine',
-      description: 'Genera una nueva rutina de ejercicios personalizada',
+      name: 'update_profile',
+      description: 'Actualiza el perfil del usuario',
       parameters: {
         type: 'object',
         properties: {
-          difficulty: {
+          experience: {
             type: 'string',
             enum: ['beginner', 'intermediate', 'advanced'],
           },
           goal: {
             type: 'string',
-            description: 'Objetivo específico',
+            enum: ['build_muscle', 'lose_weight', 'maintain', 'flexibility', 'strength'],
           },
-          workout_type: {
-            type: 'string',
-            description: 'Tipo de entrenamiento (usa el training_focus del usuario si no se especifica)',
-          },
-          custom_request: {
-            type: 'string',
-            description: 'Petición específica del usuario',
-          },
+          available_days: { type: 'number' },
+          session_duration: { type: 'number' },
         },
       },
     },
   },
 ];
-
-// Respuestas de fallback cuando algo falla
-const FALLBACK_RESPONSES = [
-  '¿Podrías reformular tu pregunta? Estoy aquí para ayudarte con rutinas, ejercicios, nutrición o técnica.',
-  '¿En qué puedo ayudarte? Puedo crear rutinas personalizadas, resolver dudas sobre ejercicios o darte consejos de nutrición.',
-  'Cuéntame más sobre lo que necesitas. ¿Quieres que genere una rutina, te explique un ejercicio o hablemos de nutrición?',
-];
-
-function getRandomFallback() {
-  return FALLBACK_RESPONSES[Math.floor(Math.random() * FALLBACK_RESPONSES.length)];
-}
 
 router.post('/', auth, async (req, res) => {
   try {
@@ -423,42 +418,37 @@ router.post('/', auth, async (req, res) => {
     if (!process.env.REACT_APP_XAI_API_KEY) {
       console.error('API key no configurada');
       return res.json({ 
-        choices: [{ 
-          message: { 
-            content: 'Hay un problema de configuración. Por favor contacta al soporte.' 
-          } 
-        }] 
+        choices: [{ message: { content: 'Hay un problema de configuracion. Contacta al soporte.' } }] 
       });
     }
 
     if (!messages || messages.length === 0) {
       return res.json({ 
-        choices: [{ 
-          message: { 
-            content: '¡Hola! Soy CalistenIA, tu coach de fitness. ¿En qué puedo ayudarte hoy?' 
-          } 
-        }] 
+        choices: [{ message: { content: 'Hola! Soy CalistenIA, tu coach de fitness. ¿En que puedo ayudarte? Puedo generarte rutinas personalizadas, resolver dudas sobre ejercicios o nutricion.' } }] 
       });
     }
 
-    // Obtener contexto del usuario para incluirlo en el prompt
+    // Obtener contexto del usuario
+    const profile = await UserProfile.findOne({ where: { user_id: req.user.id } });
     const context = await UserContext.findOne({ where: { user_id: req.user.id } });
     
-    const contextInfo = context ? `
-CONTEXTO DEL USUARIO (GUARDADO):
-- Tipo de entrenamiento: ${context.training_focus || 'no especificado'}
-- Ejercicios favoritos: ${JSON.stringify(context.preferred_exercises || [])}
-- Intensidad preferida: ${context.preferred_intensity || 'moderate'}
-- Lesiones: ${JSON.stringify(context.injuries || [])}
+    const userInfo = `
+INFORMACION DEL USUARIO:
+- Nombre: ${profile?.full_name || 'Usuario'}
+- Nivel: ${profile?.experience_level || 'intermediate'}
+- Objetivo: ${profile?.goal || 'mejorar condicion fisica'}
+- Tipo de entrenamiento: ${context?.training_focus || 'no especificado'}
+- Ejercicios favoritos: ${JSON.stringify(context?.preferred_exercises || [])}
+- Lesiones: ${JSON.stringify(context?.injuries || [])}
 
-USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
+USA ESTA INFORMACION para personalizar las rutinas.`;
 
     const messagesWithSystem = [
-      { role: 'system', content: SYSTEM_PROMPT + contextInfo },
+      { role: 'system', content: SYSTEM_PROMPT + userInfo },
       ...messages,
     ];
 
-    console.log('Enviando mensaje a Grok...');
+    console.log('Enviando a Grok:', messages[messages.length - 1]?.content);
 
     const response = await fetch(GROK_API_URL, {
       method: 'POST',
@@ -477,33 +467,22 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Error de Grok API:', errorText);
-      
-      // Devolver respuesta de fallback en lugar de error
+      console.error('Error de Grok:', errorText);
       return res.json({ 
-        choices: [{ 
-          message: { 
-            content: getRandomFallback()
-          } 
-        }] 
+        choices: [{ message: { content: 'Tuve un problema conectando. ¿Puedes intentar de nuevo?' } }] 
       });
     }
 
     let data = await response.json();
 
-    // Verificar si hay respuesta válida
     if (!data.choices || data.choices.length === 0) {
-      console.error('Respuesta vacía de Grok:', data);
+      console.error('Respuesta vacia de Grok');
       return res.json({ 
-        choices: [{ 
-          message: { 
-            content: getRandomFallback()
-          } 
-        }] 
+        choices: [{ message: { content: 'No recibi respuesta. ¿Que necesitas? Puedo crear rutinas, responder dudas de ejercicios o nutricion.' } }] 
       });
     }
 
-    // Procesar tool calls si existen
+    // Procesar tool calls
     if (data.choices[0]?.message?.tool_calls) {
       const toolCalls = data.choices[0].message.tool_calls;
       const toolResults = [];
@@ -516,11 +495,11 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
         try {
           args = JSON.parse(toolCall.function.arguments || '{}');
         } catch (parseErr) {
-          console.error('Error parseando argumentos:', parseErr);
+          console.error('Error parseando args:', parseErr);
           continue;
         }
 
-        console.log(`Ejecutando función: ${functionName}`, args);
+        console.log('Ejecutando:', functionName, args);
 
         if (availableFunctions[functionName]) {
           try {
@@ -536,17 +515,17 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
               content: JSON.stringify(result),
             });
           } catch (funcErr) {
-            console.error(`Error ejecutando ${functionName}:`, funcErr);
+            console.error(`Error en ${functionName}:`, funcErr);
             toolResults.push({
               tool_call_id: toolCall.id,
               role: 'tool',
-              content: JSON.stringify({ success: false, message: 'Error ejecutando función' }),
+              content: JSON.stringify({ success: false, message: 'Error ejecutando funcion' }),
             });
           }
         }
       }
 
-      // Segunda llamada con resultados de las funciones
+      // Segunda llamada con resultados
       if (toolResults.length > 0) {
         const followUpMessages = [
           ...messagesWithSystem,
@@ -575,9 +554,9 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
           console.error('Error en follow-up:', followUpErr);
         }
         
-        // Agregar botón de rutina si se generó una
+        // Agregar boton de rutina
         if (generatedRoutineId) {
-          let content = data.choices?.[0]?.message?.content || 'Rutina creada exitosamente.';
+          let content = data.choices?.[0]?.message?.content || 'Rutina creada exitosamente!';
           
           if (!content.includes('[ROUTINE_BUTTON:')) {
             content += `\n\n[ROUTINE_BUTTON:${generatedRoutineId}]`;
@@ -594,17 +573,12 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
       }
     }
 
-    // Verificar que la respuesta final tenga contenido
+    // Verificar respuesta final
     const finalContent = data.choices?.[0]?.message?.content;
     
     if (!finalContent || finalContent.trim() === '') {
-      console.error('Respuesta final vacía');
       return res.json({ 
-        choices: [{ 
-          message: { 
-            content: getRandomFallback()
-          } 
-        }] 
+        choices: [{ message: { content: 'Estoy aqui para ayudarte! ¿Quieres que te genere una rutina de entrenamiento?' } }] 
       });
     }
 
@@ -612,14 +586,8 @@ USA ESTA INFORMACIÓN para personalizar las rutinas.` : '';
     
   } catch (err) {
     console.error('Error en chat:', err);
-    
-    // NUNCA devolver error 500, siempre dar una respuesta
     res.json({ 
-      choices: [{ 
-        message: { 
-          content: 'Tuve un problema técnico. ¿Puedes intentar de nuevo?' 
-        } 
-      }] 
+      choices: [{ message: { content: 'Tuve un problema tecnico. ¿Puedes intentar de nuevo?' } }] 
     });
   }
 });
