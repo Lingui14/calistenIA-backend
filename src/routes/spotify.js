@@ -7,7 +7,7 @@ const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 // Usamos HTTPS para el redirect de Spotify, luego redirigimos a la app
-const SPOTIFY_REDIRECT_URI = 'https://calistenia-backend-production.up.railway.app/api/spotify/callback-web';
+const SPOTIFY_REDIRECT_URI = 'https://calistenia-backend-production-6e8f.up.railway.app/api/spotify/callback-web';
 
 /**
  * GET /api/spotify/auth-url
