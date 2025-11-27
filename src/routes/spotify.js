@@ -271,16 +271,25 @@ router.get('/playlists', auth, async (req, res) => {
 
     const searchQuery = moodMap[mood] || 'workout';
 
-    const searchResponse = await fetch(
-      `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=playlist&limit=5`,
-      {
-        headers: {
-          'Authorization': `Bearer ${context.spotify_access_token}`
-        }
-      }
-    );
+const searchResponse = await fetch(
+  `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=playlist&limit=5`,
+  {
+    headers: {
+      'Authorization': `Bearer ${context.spotify_access_token}`
+    }
+  }
+);
 
-    const searchData = await searchResponse.json();
+// AGREGAR ESTE LOGGING
+console.log('Spotify search response status:', searchResponse.status);
+
+if (!searchResponse.ok) {
+  const errorText = await searchResponse.text();
+  console.error('Spotify search error:', errorText);
+  return res.json({ playlists: getFallbackPlaylists(mood) });
+}
+
+const searchData = await searchResponse.json();
 
     if (searchData.error) {
       return res.json({ playlists: getFallbackPlaylists(mood) });
