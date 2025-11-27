@@ -20,13 +20,15 @@ router.get('/auth-url', auth, (req, res) => {
       return res.status(500).json({ message: 'Spotify no está configurado' });
     }
 
-    const scopes = [
-      'user-read-private',
-      'user-read-email',
-      'playlist-read-private',
-      'user-top-read',
-      'user-library-read'
-    ].join(' ');
+const scopes = [
+  'user-read-private',
+  'user-read-email',
+  'playlist-read-private',
+  'playlist-modify-public',
+  'playlist-modify-private',
+  'user-top-read',
+  'user-library-read'
+].join(' ');
 
     // Guardamos el user_id en el state para recuperarlo después
     const state = req.user.id;
@@ -356,6 +358,10 @@ router.get('/status', auth, async (req, res) => {
  * POST /api/spotify/music-chat
  * Mini-chat para buscar música con IA
  */
+/**
+ * POST /api/spotify/music-chat
+ * Genera recomendaciones personalizadas con IA
+ */
 router.post('/music-chat', auth, async (req, res) => {
   try {
     const { message } = req.body;
@@ -365,11 +371,10 @@ router.post('/music-chat', auth, async (req, res) => {
       return res.status(400).json({ message: 'Mensaje requerido' });
     }
 
-    // Si no hay Spotify conectado, devolver fallback
     if (!context?.spotify_access_token) {
       return res.json({ 
-        playlists: [],
-        aiMessage: 'Conecta tu Spotify primero para buscar playlists personalizadas.',
+        tracks: [],
+        aiMessage: 'Conecta tu Spotify primero para obtener recomendaciones personalizadas.',
         needsConnection: true
       });
     }
@@ -393,7 +398,7 @@ router.post('/music-chat', auth, async (req, res) => {
         
         if (refreshData.error) {
           return res.json({ 
-            playlists: [],
+            tracks: [],
             aiMessage: 'Tu sesión de Spotify expiró. Reconecta tu cuenta.',
             needsConnection: true
           });
@@ -405,31 +410,78 @@ router.post('/music-chat', auth, async (req, res) => {
         });
       } catch (refreshErr) {
         return res.json({ 
-          playlists: [],
+          tracks: [],
           aiMessage: 'Error refrescando sesión de Spotify.',
           needsConnection: true
         });
       }
     }
 
-    // Usar IA para interpretar el mensaje y generar búsqueda
+    const accessToken = context.spotify_access_token;
+
+    // 1. Obtener top artists del usuario para seeds
+    let seedArtists = [];
+    let seedTracks = [];
+    
+    try {
+      const topArtistsRes = await fetch(
+        'https://api.spotify.com/v1/me/top/artists?limit=5&time_range=medium_term',
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+      
+      if (topArtistsRes.ok) {
+        const topArtists = await topArtistsRes.json();
+        seedArtists = topArtists.items?.slice(0, 2).map(a => a.id) || [];
+      }
+
+      const topTracksRes = await fetch(
+        'https://api.spotify.com/v1/me/top/tracks?limit=5&time_range=medium_term',
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+      
+      if (topTracksRes.ok) {
+        const topTracks = await topTracksRes.json();
+        seedTracks = topTracks.items?.slice(0, 2).map(t => t.id) || [];
+      }
+    } catch (err) {
+      console.log('Error obteniendo top items:', err);
+    }
+
+    // 2. Usar IA para interpretar el mensaje
     const aiPrompt = `El usuario quiere música para entrenar y dice: "${message}"
 
-Interpreta lo que quiere y genera 2-3 términos de búsqueda para Spotify.
+Interpreta lo que quiere y genera parámetros para Spotify.
 
-RESPONDE SOLO CON JSON (sin markdown):
+GÉNEROS VÁLIDOS DE SPOTIFY (usa solo estos):
+acoustic, afrobeat, alt-rock, alternative, ambient, anime, black-metal, bluegrass, blues, bossanova, brazil, breakbeat, british, cantopop, chicago-house, children, chill, classical, club, comedy, country, dance, dancehall, death-metal, deep-house, detroit-techno, disco, disney, drum-and-bass, dub, dubstep, edm, electro, electronic, emo, folk, forro, french, funk, garage, german, gospel, goth, grindcore, groove, grunge, guitar, happy, hard-rock, hardcore, hardstyle, heavy-metal, hip-hop, holidays, honky-tonk, house, idm, indian, indie, indie-pop, industrial, iranian, j-dance, j-idol, j-pop, j-rock, jazz, k-pop, kids, latin, latino, malay, mandopop, metal, metal-misc, metalcore, minimal-techno, movies, mpb, new-age, new-release, opera, pagode, party, philippines-opm, piano, pop, pop-film, post-dubstep, power-pop, progressive-house, psych-rock, punk, punk-rock, r-n-b, rainy-day, reggae, reggaeton, road-trip, rock, rock-n-roll, rockabilly, romance, sad, salsa, samba, sertanejo, show-tunes, singer-songwriter, ska, sleep, songwriter, soul, soundtracks, spanish, study, summer, swedish, synth-pop, tango, techno, trance, trip-hop, turkish, work-out, world-music
+
+RESPONDE SOLO CON JSON:
 {
-  "searchTerms": ["término 1", "término 2"],
-  "response": "Mensaje corto y amigable sobre lo que vas a buscar (máximo 20 palabras)"
+  "genres": ["género1", "género2"],
+  "energy": 0.8,
+  "tempo": 130,
+  "valence": 0.7,
+  "response": "Mensaje corto describiendo lo que vas a generar (máx 25 palabras)",
+  "playlistName": "Nombre creativo para la playlist (máx 5 palabras)"
 }
 
-Ejemplos:
-- "rock psicodélico" -> ["psychedelic rock workout", "progressive rock gym"]
-- "algo como Daft Punk" -> ["daft punk workout", "electronic dance gym", "french house fitness"]
-- "música latina para cardio" -> ["reggaeton workout", "latin cardio", "salsa fitness"]`;
+Donde:
+- genres: 1-2 géneros de la lista de arriba que mejor coincidan
+- energy: 0.0 (calmado) a 1.0 (muy energético)
+- tempo: BPM aproximado (60-180)
+- valence: 0.0 (triste/oscuro) a 1.0 (alegre/positivo)
 
-    let searchTerms = [message + ' workout']; // Fallback
-    let aiMessage = `Buscando "${message}"...`;
+Ejemplos:
+- "rock psicodélico" -> {"genres": ["psych-rock", "alt-rock"], "energy": 0.7, "tempo": 120, "valence": 0.6}
+- "reggaeton para cardio" -> {"genres": ["reggaeton", "latin"], "energy": 0.9, "tempo": 100, "valence": 0.8}
+- "metal pesado intenso" -> {"genres": ["metal", "heavy-metal"], "energy": 0.95, "tempo": 140, "valence": 0.4}`;
+
+    let genres = ['work-out'];
+    let energy = 0.7;
+    let tempo = 120;
+    let valence = 0.6;
+    let aiMessage = `Generando música para "${message}"...`;
+    let playlistName = 'Mi Mix para Entrenar';
 
     try {
       const aiResponse = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -444,7 +496,7 @@ Ejemplos:
             { role: 'system', content: 'Eres un experto en música. Responde SOLO con JSON válido.' },
             { role: 'user', content: aiPrompt }
           ],
-          max_tokens: 300,
+          max_tokens: 400,
           temperature: 0.7,
         }),
       });
@@ -453,7 +505,6 @@ Ejemplos:
         const aiData = await aiResponse.json();
         const content = aiData.choices?.[0]?.message?.content || '';
         
-        // Extraer JSON
         let parsed;
         try {
           parsed = JSON.parse(content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim());
@@ -462,64 +513,192 @@ Ejemplos:
           if (match) parsed = JSON.parse(match[0]);
         }
 
-        if (parsed?.searchTerms?.length > 0) {
-          searchTerms = parsed.searchTerms;
-          aiMessage = parsed.response || aiMessage;
+        if (parsed) {
+          if (parsed.genres?.length > 0) genres = parsed.genres.slice(0, 2);
+          if (parsed.energy !== undefined) energy = parsed.energy;
+          if (parsed.tempo !== undefined) tempo = parsed.tempo;
+          if (parsed.valence !== undefined) valence = parsed.valence;
+          if (parsed.response) aiMessage = parsed.response;
+          if (parsed.playlistName) playlistName = parsed.playlistName;
         }
       }
     } catch (aiErr) {
       console.error('Error con IA:', aiErr);
-      // Continuar con fallback
     }
 
-    // Buscar en Spotify con cada término
-    const allPlaylists = [];
-    const seenIds = new Set();
-
-    for (const term of searchTerms.slice(0, 3)) {
-      try {
-        const searchResponse = await fetch(
-          `https://api.spotify.com/v1/search?q=${encodeURIComponent(term)}&type=playlist&limit=4`,
-          {
-            headers: {
-              'Authorization': `Bearer ${context.spotify_access_token}`
-            }
-          }
-        );
-
-        if (searchResponse.ok) {
-          const searchData = await searchResponse.json();
-          const playlists = searchData.playlists?.items?.filter(p => p !== null) || [];
-          
-          for (const p of playlists) {
-            if (!seenIds.has(p.id)) {
-              seenIds.add(p.id);
-              allPlaylists.push({
-                id: p.id,
-                name: p.name,
-                description: p.description,
-                image: p.images?.[0]?.url,
-                uri: p.uri,
-                external_url: p.external_urls?.spotify,
-                tracks_total: p.tracks?.total
-              });
-            }
-          }
-        }
-      } catch (searchErr) {
-        console.error('Error buscando:', term, searchErr);
-      }
+    // 3. Llamar a Spotify Recommendations
+    const seedGenres = genres.slice(0, 2);
+    const totalSeeds = seedArtists.length + seedTracks.length + seedGenres.length;
+    
+    // Spotify permite máximo 5 seeds en total
+    let finalSeedArtists = seedArtists;
+    let finalSeedTracks = seedTracks;
+    let finalSeedGenres = seedGenres;
+    
+    if (totalSeeds > 5) {
+      finalSeedArtists = seedArtists.slice(0, 1);
+      finalSeedTracks = seedTracks.slice(0, 1);
+      finalSeedGenres = seedGenres.slice(0, 2);
     }
+
+    const recoParams = new URLSearchParams({
+      limit: '20',
+      target_energy: energy.toString(),
+      min_energy: Math.max(0, energy - 0.2).toString(),
+      target_tempo: tempo.toString(),
+      target_valence: valence.toString(),
+    });
+
+    if (finalSeedArtists.length > 0) {
+      recoParams.append('seed_artists', finalSeedArtists.join(','));
+    }
+    if (finalSeedTracks.length > 0) {
+      recoParams.append('seed_tracks', finalSeedTracks.join(','));
+    }
+    if (finalSeedGenres.length > 0) {
+      recoParams.append('seed_genres', finalSeedGenres.join(','));
+    }
+
+    // Si no hay seeds de usuario, usar solo géneros
+    if (finalSeedArtists.length === 0 && finalSeedTracks.length === 0) {
+      recoParams.set('seed_genres', genres.slice(0, 5).join(','));
+    }
+
+    console.log('Spotify recommendations params:', recoParams.toString());
+
+    const recoResponse = await fetch(
+      `https://api.spotify.com/v1/recommendations?${recoParams.toString()}`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+    );
+
+    if (!recoResponse.ok) {
+      const errorText = await recoResponse.text();
+      console.error('Spotify recommendations error:', errorText);
+      return res.json({
+        tracks: [],
+        aiMessage: 'No pude generar recomendaciones. Intenta con otra descripción.',
+        playlistName
+      });
+    }
+
+    const recoData = await recoResponse.json();
+    
+    const tracks = recoData.tracks?.map(t => ({
+      id: t.id,
+      name: t.name,
+      artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
+      album: t.album?.name || '',
+      image: t.album?.images?.[0]?.url || null,
+      duration_ms: t.duration_ms,
+      uri: t.uri,
+      external_url: t.external_urls?.spotify,
+      preview_url: t.preview_url,
+    })) || [];
 
     res.json({
-      playlists: allPlaylists.slice(0, 8),
+      tracks,
       aiMessage,
-      searchTerms
+      playlistName,
+      trackUris: tracks.map(t => t.uri),
     });
 
   } catch (err) {
     console.error('Error en music-chat:', err);
-    res.status(500).json({ message: 'Error procesando tu petición' });
+    res.status(500).json({ message: 'Error generando recomendaciones' });
+  }
+});
+
+/**
+ * POST /api/spotify/save-playlist
+ * Guarda los tracks como playlist en la cuenta del usuario
+ */
+router.post('/save-playlist', auth, async (req, res) => {
+  try {
+    const { name, trackUris } = req.body;
+    const context = await UserContext.findOne({ where: { user_id: req.user.id } });
+
+    if (!context?.spotify_access_token) {
+      return res.status(401).json({ message: 'Spotify no conectado' });
+    }
+
+    if (!trackUris || trackUris.length === 0) {
+      return res.status(400).json({ message: 'No hay tracks para guardar' });
+    }
+
+    const accessToken = context.spotify_access_token;
+
+    // 1. Obtener el ID del usuario de Spotify
+    const meResponse = await fetch('https://api.spotify.com/v1/me', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!meResponse.ok) {
+      return res.status(500).json({ message: 'Error obteniendo perfil de Spotify' });
+    }
+
+    const meData = await meResponse.json();
+    const spotifyUserId = meData.id;
+
+    // 2. Crear la playlist
+    const createResponse = await fetch(
+      `https://api.spotify.com/v1/users/${spotifyUserId}/playlists`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name || 'Mi Mix de CalistenIA',
+          description: 'Playlist generada por CalistenIA 💪',
+          public: false,
+        }),
+      }
+    );
+
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text();
+      console.error('Error creando playlist:', errorText);
+      return res.status(500).json({ message: 'Error creando playlist' });
+    }
+
+    const playlistData = await createResponse.json();
+
+    // 3. Agregar los tracks
+    const addTracksResponse = await fetch(
+      `https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          uris: trackUris.slice(0, 100), // Spotify permite max 100 por request
+        }),
+      }
+    );
+
+    if (!addTracksResponse.ok) {
+      const errorText = await addTracksResponse.text();
+      console.error('Error agregando tracks:', errorText);
+      return res.status(500).json({ message: 'Playlist creada pero error agregando tracks' });
+    }
+
+    res.json({
+      success: true,
+      playlist: {
+        id: playlistData.id,
+        name: playlistData.name,
+        external_url: playlistData.external_urls?.spotify,
+        tracks_count: trackUris.length,
+      },
+      message: `¡Playlist "${playlistData.name}" guardada con ${trackUris.length} tracks!`
+    });
+
+  } catch (err) {
+    console.error('Error guardando playlist:', err);
+    res.status(500).json({ message: 'Error guardando playlist' });
   }
 });
 module.exports = router;
