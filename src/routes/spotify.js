@@ -255,6 +255,26 @@ router.post('/music-chat', auth, async (req, res) => {
 
     const accessToken = context.spotify_access_token;
 
+    // Obtener top artists del usuario para personalizar
+    let userTopArtists = [];
+    try {
+      const topArtistsRes = await fetch(
+        'https://api.spotify.com/v1/me/top/artists?limit=10&time_range=medium_term',
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+      
+      if (topArtistsRes.ok) {
+        const topData = await topArtistsRes.json();
+        userTopArtists = topData.items?.map(a => ({
+          name: a.name,
+          genres: a.genres || []
+        })) || [];
+        console.log('Top artists del usuario:', userTopArtists.map(a => a.name));
+      }
+    } catch (err) {
+      console.log('No se pudieron obtener top artists:', err.message);
+    }
+
     // Usar IA para interpretar el mensaje
     let artists = [];
     let genres = [];
@@ -262,7 +282,11 @@ router.post('/music-chat', auth, async (req, res) => {
     let playlistName = 'Mi Mix para Entrenar';
 
     try {
-      const aiPrompt = `El usuario quiere música para entrenar y dice: "${message}"
+      const userContext = userTopArtists.length > 0 
+        ? `\n\nCONTEXTO: Los artistas favoritos del usuario son: ${userTopArtists.slice(0, 5).map(a => a.name).join(', ')}`
+        : '';
+
+      const aiPrompt = `El usuario quiere música para entrenar y dice: "${message}"${userContext}
 
 Analiza el mensaje y extrae TODOS los artistas y géneros mencionados.
 
@@ -277,20 +301,21 @@ RESPONDE SOLO JSON:
 }
 
 REGLAS:
-- Extrae TODOS los artistas mencionados (pueden ser 0, 1, 2, 5, 10...)
-- Extrae TODOS los géneros mencionados o inferidos (pueden ser 0, 1, 2, 5...)
-- Si menciona artistas Y géneros, incluye ambos
-- Si solo menciona géneros sin artistas, deja artists vacío
-- Si solo menciona artistas sin géneros, infiere géneros relacionados
-- Si no menciona nada específico, usa géneros apropiados para workout
+- Extrae TODOS los artistas mencionados
+- Extrae TODOS los géneros mencionados
+- Para "rock psicodélico" usa artistas como: Pink Floyd, Tame Impala, King Crimson, Yes, The Doors
+- Para "rock progresivo" usa artistas como: Pink Floyd, Genesis, Yes, Rush, King Crimson, Dream Theater
+- Para "jazz" usa artistas como: Miles Davis, John Coltrane, Herbie Hancock, Thelonious Monk
+- Para "pop" usa artistas como: Taylor Swift, Dua Lipa, The Weeknd, Bruno Mars
+- Para "reggaeton" usa artistas como: Bad Bunny, Daddy Yankee, J Balvin, Ozuna
+- Para "hip-hop" usa artistas como: Kendrick Lamar, Drake, J. Cole, Travis Scott
+- Para "metal" usa artistas como: Metallica, Slipknot, Pantera, Iron Maiden
+- Para CUALQUIER género que pida el usuario, incluye artistas representativos de ese género
 
 EJEMPLOS:
-- "puro Pink Floyd" -> {"artists": ["Pink Floyd"], "genres": ["psych-rock"], ...}
-- "Pink Floyd, Daft Punk, Tame Impala y algo de electrónica" -> {"artists": ["Pink Floyd", "Daft Punk", "Tame Impala"], "genres": ["electronic", "electro"], ...}
-- "rock, metal y hip hop para entrenar" -> {"artists": [], "genres": ["rock", "metal", "hip-hop"], ...}
-- "Metallica, Slipknot, Pantera con thrash metal" -> {"artists": ["Metallica", "Slipknot", "Pantera"], "genres": ["metal", "heavy-metal"], ...}
-- "reggaeton y bad bunny" -> {"artists": ["Bad Bunny"], "genres": ["reggaeton", "latin"], ...}
-- "música intensa variada" -> {"artists": [], "genres": ["work-out", "edm", "hard-rock"], ...}`;
+- "rock psicodélico" -> {"artists": ["Pink Floyd", "Tame Impala", "The Doors", "King Crimson"], "genres": ["psych-rock"], ...}
+- "rock progresivo energético" -> {"artists": ["Yes", "Rush", "Dream Theater", "Tool"], "genres": ["progressive-house"], ...}
+- "Pink Floyd y Daft Punk" -> {"artists": ["Pink Floyd", "Daft Punk"], "genres": ["psych-rock", "electronic"], ...}`;
 
       const aiResponse = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -301,7 +326,7 @@ EJEMPLOS:
         body: JSON.stringify({
           model: 'grok-3-fast',
           messages: [
-            { role: 'system', content: 'Experto en música. Responde SOLO JSON válido.' },
+            { role: 'system', content: 'Experto en música. Responde SOLO JSON válido. Cuando el usuario pide géneros específicos, SIEMPRE incluye artistas representativos.' },
             { role: 'user', content: aiPrompt }
           ],
           max_tokens: 500,
@@ -332,16 +357,23 @@ EJEMPLOS:
       console.error('Error con IA:', aiErr);
     }
 
-    // Si no hay nada, usar default
+    // Si no hay artistas ni géneros, usar defaults basados en los gustos del usuario
     if (artists.length === 0 && genres.length === 0) {
-      genres = ['work-out'];
+      if (userTopArtists.length > 0) {
+        // Usar los top artists del usuario
+        artists = userTopArtists.slice(0, 3).map(a => a.name);
+        aiMessage = 'Playlist basada en tus artistas favoritos';
+        playlistName = 'Tu Mix Personalizado';
+      } else {
+        genres = ['work-out'];
+      }
     }
 
     let tracks = [];
     const totalTracks = 30;
 
     // Calcular cuántos tracks por cada fuente
-    const totalSources = artists.length + genres.length;
+    const totalSources = Math.max(1, artists.length + genres.length);
     const tracksPerSource = Math.ceil(totalTracks / totalSources);
 
     console.log(`Buscando: ${artists.length} artistas, ${genres.length} géneros (${tracksPerSource} tracks c/u)`);
@@ -375,33 +407,38 @@ EJEMPLOS:
       }
     }
 
-    // Buscar por géneros
-    for (const genre of genres) {
-      try {
-        const searchQuery = `${genre} workout`;
-        const searchResponse = await fetch(
-          `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=${tracksPerSource}`,
-          { headers: { 'Authorization': `Bearer ${accessToken}` } }
-        );
+    // Buscar por géneros (solo si no hay suficientes tracks de artistas)
+    if (genres.length > 0 && tracks.length < totalTracks) {
+      const remainingTracks = totalTracks - tracks.length;
+      const tracksPerGenre = Math.ceil(remainingTracks / genres.length);
+      
+      for (const genre of genres) {
+        try {
+          // Buscar por género puro, sin "workout"
+          const searchResponse = await fetch(
+            `https://api.spotify.com/v1/search?q=genre:${encodeURIComponent(genre)}&type=track&limit=${tracksPerGenre}`,
+            { headers: { 'Authorization': `Bearer ${accessToken}` } }
+          );
 
-        if (searchResponse.ok) {
-          const searchData = await searchResponse.json();
-          const genreTracks = searchData.tracks?.items?.map(t => ({
-            id: t.id,
-            name: t.name,
-            artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
-            album: t.album?.name || '',
-            image: t.album?.images?.[0]?.url || null,
-            duration_ms: t.duration_ms,
-            uri: t.uri,
-            external_url: t.external_urls?.spotify,
-          })) || [];
-          
-          tracks = tracks.concat(genreTracks);
-          console.log(`  - ${genre}: ${genreTracks.length} tracks`);
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            const genreTracks = searchData.tracks?.items?.map(t => ({
+              id: t.id,
+              name: t.name,
+              artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
+              album: t.album?.name || '',
+              image: t.album?.images?.[0]?.url || null,
+              duration_ms: t.duration_ms,
+              uri: t.uri,
+              external_url: t.external_urls?.spotify,
+            })) || [];
+            
+            tracks = tracks.concat(genreTracks);
+            console.log(`  - género ${genre}: ${genreTracks.length} tracks`);
+          }
+        } catch (err) {
+          console.error(`Error buscando género ${genre}:`, err);
         }
-      } catch (err) {
-        console.error(`Error buscando género ${genre}:`, err);
       }
     }
 
