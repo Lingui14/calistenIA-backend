@@ -256,17 +256,32 @@ router.post('/music-chat', auth, async (req, res) => {
     const accessToken = context.spotify_access_token;
 
     // Usar IA para interpretar el mensaje
+  // Usar IA para interpretar el mensaje
     let genres = ['work-out'];
+    let searchArtist = null;
     let aiMessage = `Buscando música para "${message}"...`;
     let playlistName = 'Mi Mix para Entrenar';
 
     try {
       const aiPrompt = `El usuario quiere música para entrenar y dice: "${message}"
 
-GÉNEROS VÁLIDOS: acoustic, alt-rock, ambient, blues, chill, classical, club, dance, deep-house, disco, drum-and-bass, dub, dubstep, edm, electro, electronic, folk, funk, garage, gospel, goth, grunge, guitar, hard-rock, hardcore, hardstyle, heavy-metal, hip-hop, house, indie, indie-pop, jazz, k-pop, latin, latino, metal, metalcore, minimal-techno, party, piano, pop, progressive-house, psych-rock, punk, punk-rock, r-n-b, reggae, reggaeton, rock, rock-n-roll, salsa, soul, synth-pop, techno, trance, trip-hop, work-out
+Analiza si menciona un ARTISTA ESPECÍFICO o si quiere un GÉNERO/MOOD.
+
+GÉNEROS VÁLIDOS: acoustic, alt-rock, ambient, blues, chill, classical, club, dance, deep-house, disco, drum-and-bass, dubstep, edm, electro, electronic, folk, funk, hard-rock, hardcore, hardstyle, heavy-metal, hip-hop, house, indie, indie-pop, jazz, k-pop, latin, latino, metal, metalcore, party, piano, pop, progressive-house, psych-rock, punk, punk-rock, r-n-b, reggae, reggaeton, rock, salsa, soul, synth-pop, techno, trance, work-out
 
 RESPONDE SOLO JSON:
-{"genres": ["género1"], "response": "Mensaje corto", "playlistName": "Nombre creativo"}`;
+{
+  "artist": "nombre del artista si menciona uno específico, o null si no",
+  "genres": ["género1", "género2"],
+  "response": "Mensaje corto describiendo lo que vas a buscar",
+  "playlistName": "Nombre creativo para la playlist"
+}
+
+EJEMPLOS:
+- "algo de Pink Floyd" -> {"artist": "Pink Floyd", "genres": ["psych-rock"], "response": "Aquí tienes lo mejor de Pink Floyd para entrenar", "playlistName": "Pink Floyd Workout"}
+- "quiero Daft Punk" -> {"artist": "Daft Punk", "genres": ["electronic"], "response": "Playlist de Daft Punk para tu entrenamiento", "playlistName": "Daft Punk Energy"}
+- "rock pesado para pesas" -> {"artist": null, "genres": ["hard-rock", "metal"], "response": "Rock pesado para levantar hierro", "playlistName": "Heavy Lifting Rock"}
+- "música electrónica intensa" -> {"artist": null, "genres": ["edm", "electro"], "response": "Electrónica intensa para tu workout", "playlistName": "EDM Power"}`;
 
       const aiResponse = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -298,6 +313,7 @@ RESPONDE SOLO JSON:
         }
 
         if (parsed) {
+          if (parsed.artist) searchArtist = parsed.artist;
           if (parsed.genres?.length > 0) genres = parsed.genres.slice(0, 2);
           if (parsed.response) aiMessage = parsed.response;
           if (parsed.playlistName) playlistName = parsed.playlistName;
@@ -307,12 +323,20 @@ RESPONDE SOLO JSON:
       console.error('Error con IA:', aiErr);
     }
 
-    // Buscar tracks en Spotify
-    const searchQuery = genres.join(' ') + ' workout';
-    console.log('Buscando tracks:', searchQuery);
+    // Construir query de búsqueda
+    let searchQuery;
+    if (searchArtist) {
+      // Si hay artista específico, buscar por artista
+      searchQuery = `artist:${searchArtist}`;
+      console.log('Buscando por artista:', searchArtist);
+    } else {
+      // Si no, buscar por género
+      searchQuery = genres.join(' ') + ' workout';
+      console.log('Buscando por género:', searchQuery);
+    }
     
     const searchResponse = await fetch(
-      `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=20`,
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=25`,
       { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
 
