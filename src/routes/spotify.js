@@ -309,8 +309,10 @@ REGLAS:
 - Para "pop" usa artistas como: Taylor Swift, Dua Lipa, The Weeknd, Bruno Mars
 - Para "reggaeton" usa artistas como: Bad Bunny, Daddy Yankee, J Balvin, Ozuna
 - Para "hip-hop" usa artistas como: Kendrick Lamar, Drake, J. Cole, Travis Scott
-- Para "metal" usa artistas como: Metallica, Slipknot, Pantera, Iron Maiden
+- Para "metal" usa artistas como: Metallica, Slipknot, Pantera, Iron Maiden, Avenged Sevenfold, Deftones
 - Para CUALQUIER género que pida el usuario, incluye artistas representativos de ese género
+- Si el usuario pide un género específico, INCLUYE artistas representativos de ese género
+- Si menciona artistas Y géneros, incluye ambos
 
 EJEMPLOS:
 - "rock psicodélico" -> {"artists": ["Pink Floyd", "Tame Impala", "The Doors", "King Crimson"], "genres": ["psych-rock"], ...}
