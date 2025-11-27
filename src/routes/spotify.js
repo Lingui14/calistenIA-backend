@@ -256,32 +256,41 @@ router.post('/music-chat', auth, async (req, res) => {
     const accessToken = context.spotify_access_token;
 
     // Usar IA para interpretar el mensaje
-  // Usar IA para interpretar el mensaje
-    let genres = ['work-out'];
-    let searchArtist = null;
+    let artists = [];
+    let genres = [];
     let aiMessage = `Buscando música para "${message}"...`;
     let playlistName = 'Mi Mix para Entrenar';
 
     try {
       const aiPrompt = `El usuario quiere música para entrenar y dice: "${message}"
 
-Analiza si menciona un ARTISTA ESPECÍFICO o si quiere un GÉNERO/MOOD.
+Analiza el mensaje y extrae TODOS los artistas y géneros mencionados.
 
 GÉNEROS VÁLIDOS: acoustic, alt-rock, ambient, blues, chill, classical, club, dance, deep-house, disco, drum-and-bass, dubstep, edm, electro, electronic, folk, funk, hard-rock, hardcore, hardstyle, heavy-metal, hip-hop, house, indie, indie-pop, jazz, k-pop, latin, latino, metal, metalcore, party, piano, pop, progressive-house, psych-rock, punk, punk-rock, r-n-b, reggae, reggaeton, rock, salsa, soul, synth-pop, techno, trance, work-out
 
 RESPONDE SOLO JSON:
 {
-  "artist": "nombre del artista si menciona uno específico, o null si no",
-  "genres": ["género1", "género2"],
+  "artists": ["artista1", "artista2", ...],
+  "genres": ["género1", "género2", ...],
   "response": "Mensaje corto describiendo lo que vas a buscar",
   "playlistName": "Nombre creativo para la playlist"
 }
 
+REGLAS:
+- Extrae TODOS los artistas mencionados (pueden ser 0, 1, 2, 5, 10...)
+- Extrae TODOS los géneros mencionados o inferidos (pueden ser 0, 1, 2, 5...)
+- Si menciona artistas Y géneros, incluye ambos
+- Si solo menciona géneros sin artistas, deja artists vacío
+- Si solo menciona artistas sin géneros, infiere géneros relacionados
+- Si no menciona nada específico, usa géneros apropiados para workout
+
 EJEMPLOS:
-- "algo de Pink Floyd" -> {"artist": "Pink Floyd", "genres": ["psych-rock"], "response": "Aquí tienes lo mejor de Pink Floyd para entrenar", "playlistName": "Pink Floyd Workout"}
-- "quiero Daft Punk" -> {"artist": "Daft Punk", "genres": ["electronic"], "response": "Playlist de Daft Punk para tu entrenamiento", "playlistName": "Daft Punk Energy"}
-- "rock pesado para pesas" -> {"artist": null, "genres": ["hard-rock", "metal"], "response": "Rock pesado para levantar hierro", "playlistName": "Heavy Lifting Rock"}
-- "música electrónica intensa" -> {"artist": null, "genres": ["edm", "electro"], "response": "Electrónica intensa para tu workout", "playlistName": "EDM Power"}`;
+- "puro Pink Floyd" -> {"artists": ["Pink Floyd"], "genres": ["psych-rock"], ...}
+- "Pink Floyd, Daft Punk, Tame Impala y algo de electrónica" -> {"artists": ["Pink Floyd", "Daft Punk", "Tame Impala"], "genres": ["electronic", "electro"], ...}
+- "rock, metal y hip hop para entrenar" -> {"artists": [], "genres": ["rock", "metal", "hip-hop"], ...}
+- "Metallica, Slipknot, Pantera con thrash metal" -> {"artists": ["Metallica", "Slipknot", "Pantera"], "genres": ["metal", "heavy-metal"], ...}
+- "reggaeton y bad bunny" -> {"artists": ["Bad Bunny"], "genres": ["reggaeton", "latin"], ...}
+- "música intensa variada" -> {"artists": [], "genres": ["work-out", "edm", "hard-rock"], ...}`;
 
       const aiResponse = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -295,7 +304,7 @@ EJEMPLOS:
             { role: 'system', content: 'Experto en música. Responde SOLO JSON válido.' },
             { role: 'user', content: aiPrompt }
           ],
-          max_tokens: 300,
+          max_tokens: 500,
           temperature: 0.7,
         }),
       });
@@ -313,8 +322,8 @@ EJEMPLOS:
         }
 
         if (parsed) {
-          if (parsed.artist) searchArtist = parsed.artist;
-          if (parsed.genres?.length > 0) genres = parsed.genres.slice(0, 2);
+          if (parsed.artists?.length > 0) artists = parsed.artists;
+          if (parsed.genres?.length > 0) genres = parsed.genres;
           if (parsed.response) aiMessage = parsed.response;
           if (parsed.playlistName) playlistName = parsed.playlistName;
         }
@@ -323,40 +332,97 @@ EJEMPLOS:
       console.error('Error con IA:', aiErr);
     }
 
-    // Construir query de búsqueda
-    let searchQuery;
-    if (searchArtist) {
-      // Si hay artista específico, buscar por artista
-      searchQuery = `artist:${searchArtist}`;
-      console.log('Buscando por artista:', searchArtist);
-    } else {
-      // Si no, buscar por género
-      searchQuery = genres.join(' ') + ' workout';
-      console.log('Buscando por género:', searchQuery);
+    // Si no hay nada, usar default
+    if (artists.length === 0 && genres.length === 0) {
+      genres = ['work-out'];
     }
-    
-    const searchResponse = await fetch(
-      `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=25`,
-      { headers: { 'Authorization': `Bearer ${accessToken}` } }
-    );
 
     let tracks = [];
+    const totalTracks = 30;
 
-    if (searchResponse.ok) {
-      const searchData = await searchResponse.json();
-      tracks = searchData.tracks?.items?.map(t => ({
-        id: t.id,
-        name: t.name,
-        artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
-        album: t.album?.name || '',
-        image: t.album?.images?.[0]?.url || null,
-        duration_ms: t.duration_ms,
-        uri: t.uri,
-        external_url: t.external_urls?.spotify,
-      })) || [];
-    } else {
-      console.error('Error buscando tracks:', await searchResponse.text());
+    // Calcular cuántos tracks por cada fuente
+    const totalSources = artists.length + genres.length;
+    const tracksPerSource = Math.ceil(totalTracks / totalSources);
+
+    console.log(`Buscando: ${artists.length} artistas, ${genres.length} géneros (${tracksPerSource} tracks c/u)`);
+
+    // Buscar por artistas
+    for (const artist of artists) {
+      try {
+        const searchResponse = await fetch(
+          `https://api.spotify.com/v1/search?q=artist:${encodeURIComponent(artist)}&type=track&limit=${tracksPerSource}`,
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+
+        if (searchResponse.ok) {
+          const searchData = await searchResponse.json();
+          const artistTracks = searchData.tracks?.items?.map(t => ({
+            id: t.id,
+            name: t.name,
+            artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
+            album: t.album?.name || '',
+            image: t.album?.images?.[0]?.url || null,
+            duration_ms: t.duration_ms,
+            uri: t.uri,
+            external_url: t.external_urls?.spotify,
+          })) || [];
+          
+          tracks = tracks.concat(artistTracks);
+          console.log(`  - ${artist}: ${artistTracks.length} tracks`);
+        }
+      } catch (err) {
+        console.error(`Error buscando artista ${artist}:`, err);
+      }
     }
+
+    // Buscar por géneros
+    for (const genre of genres) {
+      try {
+        const searchQuery = `${genre} workout`;
+        const searchResponse = await fetch(
+          `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=${tracksPerSource}`,
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+
+        if (searchResponse.ok) {
+          const searchData = await searchResponse.json();
+          const genreTracks = searchData.tracks?.items?.map(t => ({
+            id: t.id,
+            name: t.name,
+            artist: t.artists?.map(a => a.name).join(', ') || 'Artista desconocido',
+            album: t.album?.name || '',
+            image: t.album?.images?.[0]?.url || null,
+            duration_ms: t.duration_ms,
+            uri: t.uri,
+            external_url: t.external_urls?.spotify,
+          })) || [];
+          
+          tracks = tracks.concat(genreTracks);
+          console.log(`  - ${genre}: ${genreTracks.length} tracks`);
+        }
+      } catch (err) {
+        console.error(`Error buscando género ${genre}:`, err);
+      }
+    }
+
+    // Eliminar duplicados (por ID)
+    const uniqueTracks = [];
+    const seenIds = new Set();
+    for (const track of tracks) {
+      if (!seenIds.has(track.id)) {
+        seenIds.add(track.id);
+        uniqueTracks.push(track);
+      }
+    }
+    tracks = uniqueTracks;
+
+    // Mezclar los tracks
+    tracks = shuffleArray(tracks);
+
+    // Limitar a 30 tracks
+    tracks = tracks.slice(0, 30);
+
+    console.log(`Total: ${tracks.length} tracks únicos`);
 
     if (tracks.length === 0) {
       return res.json({
@@ -521,6 +587,16 @@ function getFallbackPlaylists(mood = 'intense') {
     ],
   };
   return fallback[mood] || fallback.intense;
+}
+
+// Función para mezclar array (shuffle)
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 module.exports = router;
